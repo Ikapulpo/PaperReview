@@ -1,0 +1,23 @@
+[project]
+name = "paper-review"
+version = "0.1.0"
+description = "Weekly NKT cell paper review system with PubMed search and Notion integration"
+requires-python = ">=3.10"
+dependencies = [
+    "requests>=2.31.0",
+    "notion-client>=2.2.0",
+    "schedule>=1.2.0",
+    "python-dotenv>=1.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-mock>=3.0",
+]
+
+[tool.setuptools.packages.find]
+include = ["src*"]
+
+[project.scripts]
+paper-review = "src.cli:main"
