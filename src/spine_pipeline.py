@@ -22,7 +22,7 @@ def _deduplicate(papers, existing_pmids: set[str]) -> tuple[list, int]:
 
 def execute_spine_pipeline(
     days: int = 7,
-    max_papers: int = 50,
+    max_papers: int = 10,
     post_to_notion: bool = True,
 ) -> dict:
     """Execute the full weekly spine review pipeline.

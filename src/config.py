@@ -21,7 +21,9 @@ class Config:
     )
 
     # Notion — Spine
-    spine_notion_database_id: str = os.getenv("SPINE_NOTION_DATABASE_ID", "")
+    spine_notion_database_id: str = os.getenv(
+        "SPINE_NOTION_DATABASE_ID", "cec3526e-3831-4769-a814-d8993576ad5e"
+    )
 
     # Anthropic API (for LLM title translation / abstract summarization)
     anthropic_api_key: str = os.getenv("ANTHROPIC_API_KEY", "")
