@@ -320,13 +320,20 @@ class SpineNotionClient:
             lines.append("\n".join(parts))
         return "\n".join(lines)
 
-    def _collect_all_interests(
-        self, starred: list[SpineScoredPaper]
+    def _collect_all_topics(
+        self,
+        starred: list[SpineScoredPaper],
+        unstarred: list[SpineScoredPaper],
     ) -> list[str]:
-        all_interests: set[str] = set()
+        """Collect interest area names as Topics for multi_select.
+
+        Uses interest area names from the scorer (脊椎外科とAI etc.) as
+        topics. These will be auto-created in Notion if they don't exist.
+        """
+        all_topics: set[str] = set()
         for s in starred:
-            all_interests.update(s.matched_interests)
-        return sorted(all_interests)
+            all_topics.update(s.matched_interests)
+        return sorted(all_topics)
 
     # ── Page blocks ─────────────────────────────────────────────────
 
@@ -522,7 +529,7 @@ class SpineNotionClient:
         highlights = self._build_highlights(starred, unstarred)
         body = self._build_body(starred, unstarred)
         papers_list = self._build_papers_list(starred, unstarred)
-        all_interests = self._collect_all_interests(starred)
+        all_interests = self._collect_all_topics(starred, unstarred)
 
         properties = {
             "Issue": {"title": _rich_text(self._get_issue_label())},
