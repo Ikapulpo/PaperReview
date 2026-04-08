@@ -1,238 +1,204 @@
-"""Notion API client for posting weekly NKT paper summaries.
+"""Notion API client for 週刊NKT（メルマガ）database.
 
-Assumes a Notion database '週刊NKT' with the following properties:
-  - タイトル (Title): Week label e.g. "2026-W15 NKT論文サマリ"
-  - 期間 (Rich Text): Date range
-  - ステータス (Select): "新規" / "確認済"
-  - 論文数 (Number): Total papers found
-
-The paper details are written as page content (blocks).
+Creates one page per weekly issue (newsletter format):
+  - Issue (title): e.g. "Vol.15 — 2026-W15"
+  - Week (date): Monday of the week
+  - Status (status): Draft
+  - Source (select): Claude Code
+  - Topics (multi_select): aggregated from all papers
+  - Intro (JP) (text): short overall summary
+  - Highlights (text): bullet-point headlines
+  - Body (JP) (text): per-paper short summaries
+  - Papers (list) (text): title/PMID/DOI/URL list
 """
 
 import logging
+import time
 from datetime import datetime, timedelta
 
 from notion_client import Client as NotionSDK
 from notion_client.errors import APIResponseError
 
 from src.config import config
-from src.scorer.relevance import RelevanceScore
+from src.scorer.relevance import ScoredArticle
 
 logger = logging.getLogger(__name__)
 
-
-def _truncate(text: str, max_len: int = 2000) -> str:
-    """Truncate text to Notion's block text limit."""
-    if len(text) <= max_len:
-        return text
-    return text[:max_len - 3] + "..."
+DATABASE_ID = "a1f5b30f-0402-4ddf-a872-c42622d9c27c"
 
 
 def _rich_text(content: str) -> list[dict]:
-    """Create a Notion rich text array."""
-    return [{"type": "text", "text": {"content": _truncate(content)}}]
-
-
-def _rich_text_with_link(content: str, url: str) -> list[dict]:
-    """Create a Notion rich text array with a link."""
-    return [{"type": "text", "text": {"content": content, "link": {"url": url}}}]
+    if not content:
+        return []
+    return [{"type": "text", "text": {"content": content[:2000]}}]
 
 
 class NotionClient:
-    """Client for posting weekly NKT paper reviews to Notion."""
+    """Client for posting weekly newsletter issues to Notion."""
+
+    RATE_LIMIT_DELAY = 0.35
 
     def __init__(self):
-        if not config.notion_api_key:
+        api_key = config.notion_api_key
+        if not api_key:
             raise ValueError(
-                "NOTION_API_KEY is required. "
-                "Set it in .env or as an environment variable."
+                "NOTION_API_KEY is required. Set it in .env or as an environment variable."
             )
-        self.client = NotionSDK(auth=config.notion_api_key)
-        self.database_id = config.notion_database_id
+        self.client = NotionSDK(auth=api_key)
+        self.database_id = config.notion_database_id or DATABASE_ID
 
-    def _week_label(self) -> str:
-        """Generate week label like '2026-W15 NKT論文サマリ'."""
+    def _get_week_monday(self) -> str:
+        today = datetime.now().date()
+        monday = today - timedelta(days=today.weekday())
+        return monday.isoformat()
+
+    def _get_issue_label(self) -> str:
         now = datetime.now()
         week_num = now.isocalendar()[1]
-        return f"{now.year}-W{week_num:02d} NKT論文サマリ"
+        return f"Vol.{week_num} — {now.year}-W{week_num:02d}"
+
+    def _build_intro(self, scored_papers: list[ScoredArticle]) -> str:
+        """Build a short intro summarizing this week's papers."""
+        total = len(scored_papers)
+        all_topics = set()
+        for s in scored_papers:
+            all_topics.update(s.matched_topics)
+
+        date_range = self._date_range_str()
+        lines = [
+            f"今週のNKT細胞関連論文は{total}件でした（{date_range}）。",
+        ]
+        if all_topics:
+            lines.append(f"カバーされたトピック: {', '.join(sorted(all_topics))}")
+
+        top3 = scored_papers[:3]
+        if top3:
+            lines.append("")
+            lines.append("注目論文:")
+            for i, s in enumerate(top3, 1):
+                lines.append(f"  {i}. {s.paper.title[:80]}")
+
+        return "\n".join(lines)
+
+    def _build_highlights(self, scored_papers: list[ScoredArticle]) -> str:
+        """Build bullet-point headlines."""
+        lines = []
+        for i, s in enumerate(scored_papers[:10], 1):
+            topic_str = f"[{s.primary_topic}]" if s.matched_topics else ""
+            first_author = s.paper.first_author
+            lines.append(
+                f"• {topic_str} {s.paper.title[:100]} "
+                f"({first_author} et al., {s.paper.journal})"
+            )
+        return "\n".join(lines)
+
+    def _build_body(self, scored_papers: list[ScoredArticle]) -> str:
+        """Build the body with per-paper summaries."""
+        sections = []
+        for i, s in enumerate(scored_papers, 1):
+            p = s.paper
+            topic_tags = ", ".join(s.matched_topics) if s.matched_topics else "General"
+            first_author = p.first_author
+
+            section = [
+                f"── #{i} ──",
+                f"{p.title}",
+                f"{first_author} et al. | {p.journal} | {p.pub_date}",
+                f"Topics: {topic_tags} | Score: {s.total_score:.2f}",
+                f"PMID: {p.pmid} | {p.url}",
+            ]
+            if p.doi:
+                section.append(f"DOI: {p.doi}")
+
+            # Add abstract excerpt (first 300 chars)
+            if p.abstract:
+                excerpt = p.abstract[:300]
+                if len(p.abstract) > 300:
+                    excerpt += "..."
+                section.append(f"\n{excerpt}")
+
+            sections.append("\n".join(section))
+
+        return "\n\n".join(sections)
+
+    def _build_papers_list(self, scored_papers: list[ScoredArticle]) -> str:
+        """Build a simple list of papers with key identifiers."""
+        lines = []
+        for s in scored_papers:
+            p = s.paper
+            parts = [f"• {p.title}"]
+            parts.append(f"  PMID: {p.pmid}")
+            if p.doi:
+                parts.append(f"  DOI: {p.doi}")
+            parts.append(f"  URL: {p.url}")
+            lines.append("\n".join(parts))
+        return "\n".join(lines)
 
     def _date_range_str(self, days: int = 7) -> str:
-        """Generate date range string."""
         end = datetime.now()
         start = end - timedelta(days=days)
-        return f"{start.strftime('%Y/%m/%d')} - {end.strftime('%Y/%m/%d')}"
+        return f"{start.strftime('%Y/%m/%d')} – {end.strftime('%Y/%m/%d')}"
 
-    def _build_paper_blocks(self, scored: RelevanceScore, rank: int) -> list[dict]:
-        """Build Notion blocks for a single paper."""
-        paper = scored.paper
-        blocks = []
+    def _collect_all_topics(self, scored_papers: list[ScoredArticle]) -> list[str]:
+        """Collect all unique topics from all papers."""
+        all_topics = set()
+        for s in scored_papers:
+            all_topics.update(s.matched_topics)
+        return sorted(all_topics)
 
-        # Heading: rank + title
-        blocks.append({
-            "object": "block",
-            "type": "heading_3",
-            "heading_3": {
-                "rich_text": _rich_text(f"#{rank} {paper.title}"),
-            },
-        })
+    def post_weekly_issue(self, scored_papers: list[ScoredArticle], days: int = 7) -> str:
+        """Post a weekly newsletter issue to the Notion database.
 
-        # Metadata line
-        meta_parts = [
-            f"著者: {paper.first_author} et al.",
-            f"雑誌: {paper.journal}",
-            f"日付: {paper.pub_date}",
-        ]
-        blocks.append({
-            "object": "block",
-            "type": "paragraph",
-            "paragraph": {
-                "rich_text": _rich_text(" | ".join(meta_parts)),
-            },
-        })
-
-        # PubMed link
-        blocks.append({
-            "object": "block",
-            "type": "paragraph",
-            "paragraph": {
-                "rich_text": _rich_text_with_link(
-                    f"PubMed: {paper.pmid}", paper.url
-                ),
-            },
-        })
-
-        # Relevance score and reason
-        blocks.append({
-            "object": "block",
-            "type": "callout",
-            "callout": {
-                "rich_text": _rich_text(
-                    f"関連度スコア: {scored.total_score:.1f}\n"
-                    f"{scored.recommendation_reason}"
-                ),
-                "icon": {"type": "emoji", "emoji": "🔬"},
-            },
-        })
-
-        # Abstract (toggle block for space saving)
-        if paper.abstract:
-            blocks.append({
-                "object": "block",
-                "type": "toggle",
-                "toggle": {
-                    "rich_text": _rich_text("Abstract"),
-                    "children": [
-                        {
-                            "object": "block",
-                            "type": "paragraph",
-                            "paragraph": {
-                                "rich_text": _rich_text(paper.abstract),
-                            },
-                        }
-                    ],
-                },
-            })
-
-        # Divider
-        blocks.append({
-            "object": "block",
-            "type": "divider",
-            "divider": {},
-        })
-
-        return blocks
-
-    def _build_summary_blocks(self, scored_papers: list[RelevanceScore]) -> list[dict]:
-        """Build a summary section at the top of the page."""
-        blocks = []
-
-        # Header
-        blocks.append({
-            "object": "block",
-            "type": "heading_2",
-            "heading_2": {
-                "rich_text": _rich_text("📊 今週のサマリ"),
-            },
-        })
-
-        # Stats by research interest
-        interest_counts: dict[str, int] = {}
-        for scored in scored_papers:
-            primary = scored.primary_interest
-            interest_counts[primary] = interest_counts.get(primary, 0) + 1
-
-        summary_lines = [f"総論文数: {len(scored_papers)}"]
-        for interest, count in sorted(interest_counts.items(), key=lambda x: x[1], reverse=True):
-            summary_lines.append(f"  • {interest}: {count}件")
-
-        blocks.append({
-            "object": "block",
-            "type": "paragraph",
-            "paragraph": {
-                "rich_text": _rich_text("\n".join(summary_lines)),
-            },
-        })
-
-        # Top recommended
-        if scored_papers:
-            blocks.append({
-                "object": "block",
-                "type": "heading_2",
-                "heading_2": {
-                    "rich_text": _rich_text("⭐ 注目論文 TOP 5"),
-                },
-            })
-
-        blocks.append({
-            "object": "block",
-            "type": "divider",
-            "divider": {},
-        })
-
-        return blocks
-
-    def post_weekly_review(
-        self, scored_papers: list[RelevanceScore], days: int = 7, max_papers: int = 20
-    ) -> str:
-        """Post weekly review to Notion database.
-
-        Returns the URL of the created page.
+        Returns the page URL if successful.
         """
         if not self.database_id:
-            raise ValueError(
-                "NOTION_DATABASE_ID is required. "
-                "Set it in .env or as an environment variable."
-            )
+            raise ValueError("NOTION_DATABASE_ID is required.")
 
-        # Build page properties
+        intro = self._build_intro(scored_papers)
+        highlights = self._build_highlights(scored_papers)
+        body = self._build_body(scored_papers)
+        papers_list = self._build_papers_list(scored_papers)
+        all_topics = self._collect_all_topics(scored_papers)
+
         properties = {
-            "タイトル": {
-                "title": _rich_text(self._week_label()),
+            "Issue": {
+                "title": _rich_text(self._get_issue_label()),
             },
-            "期間": {
-                "rich_text": _rich_text(self._date_range_str(days)),
+            "Week": {
+                "date": {"start": self._get_week_monday()},
             },
-            "論文数": {
-                "number": len(scored_papers),
+            "Status": {
+                "status": {"name": "Draft"},
             },
-            "ステータス": {
-                "select": {"name": "新規"},
+            "Source": {
+                "select": {"name": "Claude Code"},
+            },
+            "Topics": {
+                "multi_select": [{"name": t} for t in all_topics],
+            },
+            "Intro (JP)": {
+                "rich_text": _rich_text(intro),
+            },
+            "Highlights": {
+                "rich_text": _rich_text(highlights),
+            },
+            "Body (JP)": {
+                "rich_text": _rich_text(body),
+            },
+            "Papers (list)": {
+                "rich_text": _rich_text(papers_list),
             },
         }
 
-        # Build page content blocks
-        top_papers = scored_papers[:max_papers]
-        children = self._build_summary_blocks(top_papers)
-        for rank, scored in enumerate(top_papers, 1):
-            paper_blocks = self._build_paper_blocks(scored, rank)
-            children.extend(paper_blocks)
-
-        # Notion API limits children to 100 blocks per request
-        # Split if needed
-        first_batch = children[:100]
-        remaining = children[100:]
+        # Build page body blocks for richer formatting
+        children = self._build_page_blocks(scored_papers)
 
         try:
+            time.sleep(self.RATE_LIMIT_DELAY)
+            # Create page with first 100 blocks
+            first_batch = children[:100]
+            remaining = children[100:]
+
             page = self.client.pages.create(
                 parent={"database_id": self.database_id},
                 properties=properties,
@@ -241,23 +207,118 @@ class NotionClient:
             page_id = page["id"]
             page_url = page.get("url", "")
 
-            # Append remaining blocks if any
+            # Append remaining blocks
             for i in range(0, len(remaining), 100):
+                time.sleep(self.RATE_LIMIT_DELAY)
                 batch = remaining[i:i + 100]
                 self.client.blocks.children.append(
                     block_id=page_id,
                     children=batch,
                 )
 
-            logger.info(f"Posted weekly review to Notion: {page_url}")
+            logger.info(f"Posted weekly issue to Notion: {page_url}")
             return page_url
 
         except APIResponseError as e:
-            logger.error(f"Notion API error: {e}")
-            raise
+            if e.status == 429:
+                logger.warning("Rate limited. Retrying in 2s...")
+                time.sleep(2.0)
+                try:
+                    page = self.client.pages.create(
+                        parent={"database_id": self.database_id},
+                        properties=properties,
+                        children=children[:100],
+                    )
+                    return page.get("url", "")
+                except APIResponseError:
+                    logger.error("Retry failed")
+                    raise
+            else:
+                logger.error(f"Notion API error: {e}")
+                raise
+
+    def _build_page_blocks(self, scored_papers: list[ScoredArticle]) -> list[dict]:
+        """Build rich page body blocks."""
+        blocks = []
+
+        # Intro heading
+        blocks.append({
+            "object": "block",
+            "type": "heading_2",
+            "heading_2": {"rich_text": _rich_text("📊 今週のサマリ")},
+        })
+
+        # Stats callout
+        topic_counts: dict[str, int] = {}
+        for s in scored_papers:
+            for t in s.matched_topics:
+                topic_counts[t] = topic_counts.get(t, 0) + 1
+
+        stats_lines = [f"総論文数: {len(scored_papers)}"]
+        for t, c in sorted(topic_counts.items(), key=lambda x: x[1], reverse=True):
+            stats_lines.append(f"  • {t}: {c}件")
+
+        blocks.append({
+            "object": "block",
+            "type": "callout",
+            "callout": {
+                "rich_text": _rich_text("\n".join(stats_lines)),
+                "icon": {"type": "emoji", "emoji": "📈"},
+            },
+        })
+
+        blocks.append({"object": "block", "type": "divider", "divider": {}})
+
+        # Each paper
+        for rank, s in enumerate(scored_papers, 1):
+            p = s.paper
+
+            # Title
+            blocks.append({
+                "object": "block",
+                "type": "heading_3",
+                "heading_3": {"rich_text": _rich_text(f"#{rank} {p.title}")},
+            })
+
+            # Metadata
+            meta = (
+                f"{p.first_author} et al. | {p.journal} | {p.pub_date}\n"
+                f"Score: {s.total_score:.2f} | "
+                f"Topics: {', '.join(s.matched_topics) if s.matched_topics else 'General'}"
+            )
+            blocks.append({
+                "object": "block",
+                "type": "paragraph",
+                "paragraph": {"rich_text": _rich_text(meta)},
+            })
+
+            # PubMed link
+            blocks.append({
+                "object": "block",
+                "type": "bookmark",
+                "bookmark": {"url": p.url},
+            })
+
+            # Abstract toggle
+            if p.abstract:
+                blocks.append({
+                    "object": "block",
+                    "type": "toggle",
+                    "toggle": {
+                        "rich_text": _rich_text("Abstract"),
+                        "children": [{
+                            "object": "block",
+                            "type": "paragraph",
+                            "paragraph": {"rich_text": _rich_text(p.abstract[:2000])},
+                        }],
+                    },
+                })
+
+            blocks.append({"object": "block", "type": "divider", "divider": {}})
+
+        return blocks
 
     def verify_connection(self) -> bool:
-        """Verify that the Notion integration is properly configured."""
         try:
             db = self.client.databases.retrieve(database_id=self.database_id)
             title_parts = db.get("title", [])
