@@ -6,13 +6,14 @@ Creates one page per weekly issue (newsletter format):
   - Status (status): Draft
   - Source (select): Claude Code
   - Topics (multi_select): aggregated from all papers
-  - Intro (JP) (text): short overall summary
+  - Intro (JP) (text): smart commentary + overall summary
   - Highlights (text): bullet-point headlines
   - Body (JP) (text): per-paper short summaries
   - Papers (list) (text): title/PMID/DOI/URL list
 """
 
 import logging
+import re
 import time
 from datetime import datetime, timedelta
 
@@ -33,6 +34,14 @@ def _rich_text(content: str) -> list[dict]:
     return [{"type": "text", "text": {"content": content[:2000]}}]
 
 
+def _extract_text(rich_text_list: list) -> str:
+    """Extract plain text from Notion rich_text property."""
+    return "".join(
+        t.get("plain_text", "") or t.get("text", {}).get("content", "")
+        for t in rich_text_list
+    )
+
+
 class NotionClient:
     """Client for posting weekly newsletter issues to Notion."""
 
@@ -47,6 +56,159 @@ class NotionClient:
         self.client = NotionSDK(auth=api_key)
         self.database_id = config.notion_database_id or DATABASE_ID
 
+    # ── Duplicate detection ─────────────────────────────────────────
+
+    def get_existing_pmids(self) -> set[str]:
+        """Fetch all PMIDs already posted in the database.
+
+        Parses the 'Papers (list)' and 'Body (JP)' properties of all
+        existing issues to extract PMIDs.
+        """
+        pmids: set[str] = set()
+        has_more = True
+        start_cursor = None
+
+        while has_more:
+            try:
+                time.sleep(self.RATE_LIMIT_DELAY)
+                kwargs = {
+                    "database_id": self.database_id,
+                    "page_size": 100,
+                }
+                if start_cursor:
+                    kwargs["start_cursor"] = start_cursor
+
+                resp = self.client.databases.query(**kwargs)
+                for page in resp.get("results", []):
+                    props = page.get("properties", {})
+
+                    # Extract from Papers (list)
+                    papers_list_prop = props.get("Papers (list)", {})
+                    papers_text = _extract_text(
+                        papers_list_prop.get("rich_text", [])
+                    )
+                    pmids.update(re.findall(r"PMID:\s*(\d+)", papers_text))
+
+                    # Also check Body (JP) as backup
+                    body_prop = props.get("Body (JP)", {})
+                    body_text = _extract_text(body_prop.get("rich_text", []))
+                    pmids.update(re.findall(r"PMID:\s*(\d+)", body_text))
+
+                has_more = resp.get("has_more", False)
+                start_cursor = resp.get("next_cursor")
+
+            except APIResponseError as e:
+                logger.warning(f"Failed to query existing pages: {e}")
+                break
+
+        logger.info(f"Found {len(pmids)} existing PMIDs in Notion")
+        return pmids
+
+    # ── Smart weekly commentary ─────────────────────────────────────
+
+    def _generate_weekly_comment(
+        self,
+        scored_papers: list[ScoredArticle],
+        total_before_dedup: int,
+        duplicates_removed: int,
+    ) -> str:
+        """Generate a smart, contextual opening comment for the week."""
+        n = len(scored_papers)
+        top_score = scored_papers[0].total_score if scored_papers else 0
+        all_topics = set()
+        for s in scored_papers:
+            all_topics.update(s.matched_topics)
+
+        # Count papers with high relevance (score >= 0.20)
+        high_relevance = sum(1 for s in scored_papers if s.total_score >= 0.20)
+
+        # ── Determine the "mood" of the week ──
+
+        if n == 0:
+            return (
+                "今週はNKT関連の新規論文はありませんでした。"
+                "静かな一週間ですが、次週に期待しましょう。"
+            )
+
+        comment_parts = []
+
+        # Opening: quality assessment
+        if top_score >= 0.8 and high_relevance >= 2:
+            comment_parts.append(
+                "今週は当たり週です！ "
+                "研究に直結しそうな良い論文が複数出ています。"
+            )
+        elif top_score >= 0.5:
+            comment_parts.append(
+                "今週は注目すべき論文があります。"
+                "特にトップの論文はチェックする価値がありそうです。"
+            )
+        elif top_score >= 0.20 and high_relevance >= 1:
+            comment_parts.append(
+                "今週は研究に関連しそうな論文がいくつか出ています。"
+            )
+        elif n >= 5:
+            comment_parts.append(
+                "今週はNKT論文の数は多いものの、"
+                "直接的に関連する論文は少なめです。"
+            )
+        elif n <= 2:
+            comment_parts.append(
+                "今週は少なめの週でした。"
+                "NKT分野は論文数の波がありますが、次週に期待です。"
+            )
+        else:
+            comment_parts.append(
+                "今週もNKT関連の論文をお届けします。"
+            )
+
+        # Topic highlights
+        lab_core_topics = {
+            "iNKT development", "NKT-B cell", "B cell tolerance",
+            "Thymus / development", "Osteoimmunology",
+        }
+        relevant_core = all_topics & lab_core_topics
+        if relevant_core:
+            comment_parts.append(
+                f"当研究室のコアテーマに関連: {', '.join(sorted(relevant_core))}。"
+            )
+
+        vaccine_topics = {"Tumor immunity"}
+        if vaccine_topics & all_topics:
+            vaccine_papers = [
+                s for s in scored_papers
+                if "Tumor immunity" in s.matched_topics and s.total_score >= 0.15
+            ]
+            if vaccine_papers:
+                comment_parts.append(
+                    f"NKTワクチン・細胞治療関連は{len(vaccine_papers)}件。"
+                )
+
+        bone_topics = {"Osteoimmunology"}
+        if bone_topics & all_topics:
+            comment_parts.append(
+                "骨免疫学（Osteoimmunology）関連の報告あり — "
+                "骨代謝・整形外科研究との接点に注目。"
+            )
+
+        # Top paper callout
+        if scored_papers and top_score >= 0.20:
+            top = scored_papers[0]
+            comment_parts.append(
+                f"\n一番のおすすめ: 「{top.paper.title[:60]}」"
+                f"（{top.paper.first_author} et al., {top.paper.journal}）"
+            )
+
+        # Dedup info
+        if duplicates_removed > 0:
+            comment_parts.append(
+                f"\n※ 過去に取り上げた{duplicates_removed}件は除外済みです。"
+            )
+
+        return "".join(comment_parts)
+
+    # ── Build newsletter content ────────────────────────────────────
+
     def _get_week_monday(self) -> str:
         today = datetime.now().date()
         monday = today - timedelta(days=today.weekday())
@@ -57,60 +219,50 @@ class NotionClient:
         week_num = now.isocalendar()[1]
         return f"Vol.{week_num} — {now.year}-W{week_num:02d}"
 
-    def _build_intro(self, scored_papers: list[ScoredArticle]) -> str:
-        """Build a short intro summarizing this week's papers."""
-        total = len(scored_papers)
-        all_topics = set()
-        for s in scored_papers:
-            all_topics.update(s.matched_topics)
-
+    def _build_intro(
+        self,
+        scored_papers: list[ScoredArticle],
+        total_before_dedup: int,
+        duplicates_removed: int,
+    ) -> str:
+        """Build intro with smart commentary."""
+        comment = self._generate_weekly_comment(
+            scored_papers, total_before_dedup, duplicates_removed
+        )
         date_range = self._date_range_str()
-        lines = [
-            f"今週のNKT細胞関連論文は{total}件でした（{date_range}）。",
-        ]
-        if all_topics:
-            lines.append(f"カバーされたトピック: {', '.join(sorted(all_topics))}")
 
-        top3 = scored_papers[:3]
-        if top3:
-            lines.append("")
-            lines.append("注目論文:")
-            for i, s in enumerate(top3, 1):
-                lines.append(f"  {i}. {s.paper.title[:80]}")
+        lines = [comment, "", f"検索期間: {date_range} | 新規論文: {len(scored_papers)}件"]
+
+        if duplicates_removed > 0:
+            lines[-1] += f"（既出{duplicates_removed}件を除外）"
 
         return "\n".join(lines)
 
     def _build_highlights(self, scored_papers: list[ScoredArticle]) -> str:
-        """Build bullet-point headlines."""
         lines = []
-        for i, s in enumerate(scored_papers[:10], 1):
+        for s in scored_papers[:10]:
             topic_str = f"[{s.primary_topic}]" if s.matched_topics else ""
-            first_author = s.paper.first_author
             lines.append(
                 f"• {topic_str} {s.paper.title[:100]} "
-                f"({first_author} et al., {s.paper.journal})"
+                f"({s.paper.first_author} et al., {s.paper.journal})"
             )
         return "\n".join(lines)
 
     def _build_body(self, scored_papers: list[ScoredArticle]) -> str:
-        """Build the body with per-paper summaries."""
         sections = []
         for i, s in enumerate(scored_papers, 1):
             p = s.paper
             topic_tags = ", ".join(s.matched_topics) if s.matched_topics else "General"
-            first_author = p.first_author
 
             section = [
                 f"── #{i} ──",
                 f"{p.title}",
-                f"{first_author} et al. | {p.journal} | {p.pub_date}",
+                f"{p.first_author} et al. | {p.journal} | {p.pub_date}",
                 f"Topics: {topic_tags} | Score: {s.total_score:.2f}",
                 f"PMID: {p.pmid} | {p.url}",
             ]
             if p.doi:
                 section.append(f"DOI: {p.doi}")
-
-            # Add abstract excerpt (first 300 chars)
             if p.abstract:
                 excerpt = p.abstract[:300]
                 if len(p.abstract) > 300:
@@ -122,7 +274,6 @@ class NotionClient:
         return "\n\n".join(sections)
 
     def _build_papers_list(self, scored_papers: list[ScoredArticle]) -> str:
-        """Build a simple list of papers with key identifiers."""
         lines = []
         for s in scored_papers:
             p = s.paper
@@ -140,62 +291,64 @@ class NotionClient:
         return f"{start.strftime('%Y/%m/%d')} – {end.strftime('%Y/%m/%d')}"
 
     def _collect_all_topics(self, scored_papers: list[ScoredArticle]) -> list[str]:
-        """Collect all unique topics from all papers."""
         all_topics = set()
         for s in scored_papers:
             all_topics.update(s.matched_topics)
         return sorted(all_topics)
 
-    def post_weekly_issue(self, scored_papers: list[ScoredArticle], days: int = 7) -> str:
-        """Post a weekly newsletter issue to the Notion database.
+    # ── Post to Notion ──────────────────────────────────────────────
 
-        Returns the page URL if successful.
-        """
+    def post_weekly_issue(
+        self,
+        scored_papers: list[ScoredArticle],
+        days: int = 7,
+        total_before_dedup: int = 0,
+        duplicates_removed: int = 0,
+    ) -> str:
+        """Post a weekly newsletter issue to the Notion database."""
         if not self.database_id:
             raise ValueError("NOTION_DATABASE_ID is required.")
 
-        intro = self._build_intro(scored_papers)
+        if not scored_papers:
+            # No new papers after dedup
+            intro = self._generate_weekly_comment(
+                [], total_before_dedup, duplicates_removed
+            )
+            properties = {
+                "Issue": {"title": _rich_text(self._get_issue_label())},
+                "Week": {"date": {"start": self._get_week_monday()}},
+                "Status": {"status": {"name": "Draft"}},
+                "Source": {"select": {"name": "Claude Code"}},
+                "Intro (JP)": {"rich_text": _rich_text(intro)},
+            }
+            page = self.client.pages.create(
+                parent={"database_id": self.database_id},
+                properties=properties,
+            )
+            return page.get("url", "")
+
+        intro = self._build_intro(scored_papers, total_before_dedup, duplicates_removed)
         highlights = self._build_highlights(scored_papers)
         body = self._build_body(scored_papers)
         papers_list = self._build_papers_list(scored_papers)
         all_topics = self._collect_all_topics(scored_papers)
 
         properties = {
-            "Issue": {
-                "title": _rich_text(self._get_issue_label()),
-            },
-            "Week": {
-                "date": {"start": self._get_week_monday()},
-            },
-            "Status": {
-                "status": {"name": "Draft"},
-            },
-            "Source": {
-                "select": {"name": "Claude Code"},
-            },
-            "Topics": {
-                "multi_select": [{"name": t} for t in all_topics],
-            },
-            "Intro (JP)": {
-                "rich_text": _rich_text(intro),
-            },
-            "Highlights": {
-                "rich_text": _rich_text(highlights),
-            },
-            "Body (JP)": {
-                "rich_text": _rich_text(body),
-            },
-            "Papers (list)": {
-                "rich_text": _rich_text(papers_list),
-            },
+            "Issue": {"title": _rich_text(self._get_issue_label())},
+            "Week": {"date": {"start": self._get_week_monday()}},
+            "Status": {"status": {"name": "Draft"}},
+            "Source": {"select": {"name": "Claude Code"}},
+            "Topics": {"multi_select": [{"name": t} for t in all_topics]},
+            "Intro (JP)": {"rich_text": _rich_text(intro)},
+            "Highlights": {"rich_text": _rich_text(highlights)},
+            "Body (JP)": {"rich_text": _rich_text(body)},
+            "Papers (list)": {"rich_text": _rich_text(papers_list)},
         }
 
-        # Build page body blocks for richer formatting
-        children = self._build_page_blocks(scored_papers)
+        children = self._build_page_blocks(scored_papers, intro)
 
         try:
             time.sleep(self.RATE_LIMIT_DELAY)
-            # Create page with first 100 blocks
             first_batch = children[:100]
             remaining = children[100:]
 
@@ -207,13 +360,11 @@ class NotionClient:
             page_id = page["id"]
             page_url = page.get("url", "")
 
-            # Append remaining blocks
             for i in range(0, len(remaining), 100):
                 time.sleep(self.RATE_LIMIT_DELAY)
                 batch = remaining[i:i + 100]
                 self.client.blocks.children.append(
-                    block_id=page_id,
-                    children=batch,
+                    block_id=page_id, children=batch,
                 )
 
             logger.info(f"Posted weekly issue to Notion: {page_url}")
@@ -237,34 +388,46 @@ class NotionClient:
                 logger.error(f"Notion API error: {e}")
                 raise
 
-    def _build_page_blocks(self, scored_papers: list[ScoredArticle]) -> list[dict]:
+    def _build_page_blocks(
+        self,
+        scored_papers: list[ScoredArticle],
+        intro: str,
+    ) -> list[dict]:
         """Build rich page body blocks."""
         blocks = []
 
-        # Intro heading
+        # Weekly comment callout (the smart intro)
+        blocks.append({
+            "object": "block",
+            "type": "callout",
+            "callout": {
+                "rich_text": _rich_text(intro),
+                "icon": {"type": "emoji", "emoji": "💡"},
+            },
+        })
+
+        blocks.append({"object": "block", "type": "divider", "divider": {}})
+
+        # Stats heading
         blocks.append({
             "object": "block",
             "type": "heading_2",
-            "heading_2": {"rich_text": _rich_text("📊 今週のサマリ")},
+            "heading_2": {"rich_text": _rich_text("📊 トピック別サマリ")},
         })
 
-        # Stats callout
         topic_counts: dict[str, int] = {}
         for s in scored_papers:
             for t in s.matched_topics:
                 topic_counts[t] = topic_counts.get(t, 0) + 1
 
-        stats_lines = [f"総論文数: {len(scored_papers)}"]
+        stats_lines = [f"新規論文数: {len(scored_papers)}"]
         for t, c in sorted(topic_counts.items(), key=lambda x: x[1], reverse=True):
             stats_lines.append(f"  • {t}: {c}件")
 
         blocks.append({
             "object": "block",
-            "type": "callout",
-            "callout": {
-                "rich_text": _rich_text("\n".join(stats_lines)),
-                "icon": {"type": "emoji", "emoji": "📈"},
-            },
+            "type": "paragraph",
+            "paragraph": {"rich_text": _rich_text("\n".join(stats_lines))},
         })
 
         blocks.append({"object": "block", "type": "divider", "divider": {}})
@@ -272,15 +435,12 @@ class NotionClient:
         # Each paper
         for rank, s in enumerate(scored_papers, 1):
             p = s.paper
-
-            # Title
             blocks.append({
                 "object": "block",
                 "type": "heading_3",
                 "heading_3": {"rich_text": _rich_text(f"#{rank} {p.title}")},
             })
 
-            # Metadata
             meta = (
                 f"{p.first_author} et al. | {p.journal} | {p.pub_date}\n"
                 f"Score: {s.total_score:.2f} | "
@@ -292,14 +452,12 @@ class NotionClient:
                 "paragraph": {"rich_text": _rich_text(meta)},
             })
 
-            # PubMed link
             blocks.append({
                 "object": "block",
                 "type": "bookmark",
                 "bookmark": {"url": p.url},
             })
 
-            # Abstract toggle
             if p.abstract:
                 blocks.append({
                     "object": "block",
