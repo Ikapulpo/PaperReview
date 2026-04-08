@@ -245,9 +245,7 @@ class SpineNotionClient:
         if p.affiliation:
             lines.append(f"施設: {p.affiliation}")
         lines.append(f"ジャーナル: {p.journal_vol_issue}")
-        if p.doi:
-            lines.append(f"DOI: {p.doi}")
-        lines.append(f"PMID: {p.pmid} | {p.url}")
+        lines.append(f"論文リンク: {p.url}")
 
         if interests_str:
             lines.append(f"関心領域: {interests_str}")
@@ -439,8 +437,6 @@ class SpineNotionClient:
         if p.affiliation:
             meta_lines.append(f"施設: {p.affiliation}")
         meta_lines.append(f"ジャーナル: {p.journal_vol_issue}")
-        if p.doi:
-            meta_lines.append(f"DOI: {p.doi}")
 
         if scored.matched_interests:
             meta_lines.append(f"関心領域: {'、'.join(scored.matched_interests)}")
