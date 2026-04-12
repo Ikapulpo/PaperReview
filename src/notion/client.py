@@ -8,8 +8,13 @@ Creates one page per weekly issue (newsletter format):
   - Topics (multi_select): aggregated from all papers
   - Intro (JP) (text): smart commentary + overall summary
   - Highlights (text): bullet-point headlines
-  - Body (JP) (text): per-paper short summaries
+  - Body (JP) (text): per-paper short summaries with method/concept reasons
   - Papers (list) (text): title/PMID/DOI/URL list
+
+Each paper entry includes:
+  - Research pillar relevance (NKT恒常性維持/NKTワクチン/整形外科/骨代謝研究)
+  - Method applicability (how experimental approaches can be applied)
+  - Concept connection (why the paper is conceptually relevant)
 """
 
 import logging
@@ -162,33 +167,49 @@ class NotionClient:
                 "今週もNKT関連の論文をお届けします。"
             )
 
-        # Topic highlights
-        lab_core_topics = {
-            "iNKT development", "NKT-B cell", "B cell tolerance",
-            "Thymus / development", "Osteoimmunology",
-        }
-        relevant_core = all_topics & lab_core_topics
-        if relevant_core:
-            comment_parts.append(
-                f"当研究室のコアテーマに関連: {', '.join(sorted(relevant_core))}。"
+        # Research pillar highlights
+        pillar_counts: dict[str, int] = {}
+        for s in scored_papers:
+            for p_name in s.matched_pillars:
+                pillar_counts[p_name] = pillar_counts.get(p_name, 0) + 1
+
+        pillar_highlights = []
+        if pillar_counts.get("NKT恒常性維持", 0) > 0:
+            cnt = pillar_counts["NKT恒常性維持"]
+            pillar_highlights.append(
+                f"NKT恒常性維持に関連する論文が{cnt}件"
+            )
+        if pillar_counts.get("NKTワクチン", 0) > 0:
+            cnt = pillar_counts["NKTワクチン"]
+            pillar_highlights.append(
+                f"NKTワクチン・免疫療法に{cnt}件"
+            )
+        if pillar_counts.get("骨代謝研究", 0) > 0:
+            cnt = pillar_counts["骨代謝研究"]
+            pillar_highlights.append(
+                f"骨代謝研究に{cnt}件"
+            )
+        if pillar_counts.get("整形外科", 0) > 0:
+            cnt = pillar_counts["整形外科"]
+            pillar_highlights.append(
+                f"整形外科関連に{cnt}件"
             )
 
-        vaccine_topics = {"Tumor immunity"}
-        if vaccine_topics & all_topics:
-            vaccine_papers = [
-                s for s in scored_papers
-                if "Tumor immunity" in s.matched_topics and s.total_score >= 0.15
-            ]
-            if vaccine_papers:
-                comment_parts.append(
-                    f"NKTワクチン・細胞治療関連は{len(vaccine_papers)}件。"
-                )
-
-        bone_topics = {"Osteoimmunology"}
-        if bone_topics & all_topics:
+        if pillar_highlights:
             comment_parts.append(
-                "骨免疫学（Osteoimmunology）関連の報告あり — "
-                "骨代謝・整形外科研究との接点に注目。"
+                f"当研究室との関連: {' / '.join(pillar_highlights)}。"
+            )
+
+        # Method highlights
+        method_counts: dict[str, int] = {}
+        for s in scored_papers:
+            for m in s.matched_methods:
+                method_counts[m] = method_counts.get(m, 0) + 1
+        if method_counts:
+            top_methods = sorted(method_counts.items(), key=lambda x: x[1], reverse=True)[:3]
+            method_strs = [f"{m}({c}件)" for m, c in top_methods]
+            comment_parts.append(
+                f"注目手法: {', '.join(method_strs)}。"
             )
 
         # Top paper callout
@@ -242,8 +263,10 @@ class NotionClient:
         lines = []
         for s in scored_papers[:10]:
             topic_str = f"[{s.primary_topic}]" if s.matched_topics else ""
+            pillar_str = f"→{s.primary_pillar}" if s.matched_pillars else ""
+            tags = " ".join(filter(None, [topic_str, pillar_str]))
             lines.append(
-                f"• {topic_str} {s.paper.title[:100]} "
+                f"• {tags} {s.paper.title[:100]} "
                 f"({s.paper.first_author} et al., {s.paper.journal})"
             )
         return "\n".join(lines)
@@ -263,6 +286,20 @@ class NotionClient:
             ]
             if p.doi:
                 section.append(f"DOI: {p.doi}")
+
+            # Research pillar relevance
+            if s.matched_pillars:
+                section.append(f"\n研究との関連: {' / '.join(s.matched_pillars)}")
+                for pillar in s.matched_pillars:
+                    if pillar in s.pillar_reasons:
+                        section.append(f"  → {pillar}: {s.pillar_reasons[pillar]}")
+
+            # Method applicability
+            if s.matched_methods:
+                section.append(f"使用手法: {', '.join(s.matched_methods)}")
+            if s.method_relevance:
+                section.append(f"活用ポイント: {s.method_relevance}")
+
             if p.abstract:
                 excerpt = p.abstract[:300]
                 if len(p.abstract) > 300:
@@ -408,7 +445,45 @@ class NotionClient:
 
         blocks.append({"object": "block", "type": "divider", "divider": {}})
 
-        # Stats heading
+        # Pillar relevance heading
+        blocks.append({
+            "object": "block",
+            "type": "heading_2",
+            "heading_2": {"rich_text": _rich_text("🎯 研究テーマ別おすすめ")},
+        })
+
+        pillar_counts: dict[str, int] = {}
+        for s in scored_papers:
+            for p_name in s.matched_pillars:
+                pillar_counts[p_name] = pillar_counts.get(p_name, 0) + 1
+
+        pillar_lines = [f"新規論文数: {len(scored_papers)}"]
+        pillar_order = ["NKT恒常性維持", "NKTワクチン", "整形外科", "骨代謝研究"]
+        for name in pillar_order:
+            count = pillar_counts.get(name, 0)
+            if count > 0:
+                pillar_lines.append(f"  ■ {name}: {count}件")
+
+        # Method summary
+        method_counts: dict[str, int] = {}
+        for s in scored_papers:
+            for m in s.matched_methods:
+                method_counts[m] = method_counts.get(m, 0) + 1
+        if method_counts:
+            pillar_lines.append("")
+            pillar_lines.append("注目手法:")
+            for m, c in sorted(method_counts.items(), key=lambda x: x[1], reverse=True)[:5]:
+                pillar_lines.append(f"  • {m}: {c}件")
+
+        blocks.append({
+            "object": "block",
+            "type": "paragraph",
+            "paragraph": {"rich_text": _rich_text("\n".join(pillar_lines))},
+        })
+
+        blocks.append({"object": "block", "type": "divider", "divider": {}})
+
+        # Topic stats heading
         blocks.append({
             "object": "block",
             "type": "heading_2",
@@ -420,7 +495,7 @@ class NotionClient:
             for t in s.matched_topics:
                 topic_counts[t] = topic_counts.get(t, 0) + 1
 
-        stats_lines = [f"新規論文数: {len(scored_papers)}"]
+        stats_lines = []
         for t, c in sorted(topic_counts.items(), key=lambda x: x[1], reverse=True):
             stats_lines.append(f"  • {t}: {c}件")
 
@@ -435,10 +510,17 @@ class NotionClient:
         # Each paper
         for rank, s in enumerate(scored_papers, 1):
             p = s.paper
+
+            # Title with pillar badge
+            pillar_badge = ""
+            if s.matched_pillars:
+                pillar_badge = f"[{s.primary_pillar}] "
             blocks.append({
                 "object": "block",
                 "type": "heading_3",
-                "heading_3": {"rich_text": _rich_text(f"#{rank} {p.title}")},
+                "heading_3": {"rich_text": _rich_text(
+                    f"#{rank} {pillar_badge}{p.title}"
+                )},
             })
 
             meta = (
@@ -451,6 +533,32 @@ class NotionClient:
                 "type": "paragraph",
                 "paragraph": {"rich_text": _rich_text(meta)},
             })
+
+            # Recommendation reason callout
+            reason_parts = []
+            if s.matched_pillars:
+                reason_parts.append(
+                    f"研究との関連: {' / '.join(s.matched_pillars)}"
+                )
+                top_pillar = s.matched_pillars[0]
+                if top_pillar in s.pillar_reasons:
+                    reason_parts.append(f"  {s.pillar_reasons[top_pillar]}")
+            if s.matched_methods:
+                reason_parts.append(
+                    f"手法: {', '.join(s.matched_methods)}"
+                )
+            if s.method_relevance:
+                reason_parts.append(f"活用: {s.method_relevance}")
+
+            if reason_parts:
+                blocks.append({
+                    "object": "block",
+                    "type": "callout",
+                    "callout": {
+                        "rich_text": _rich_text("\n".join(reason_parts)),
+                        "icon": {"type": "emoji", "emoji": "🔬"},
+                    },
+                })
 
             blocks.append({
                 "object": "block",

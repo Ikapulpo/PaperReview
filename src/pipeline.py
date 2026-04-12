@@ -109,14 +109,46 @@ def execute_pipeline(days: int = 7, max_papers: int = 20, post_to_notion: bool =
         print(f"（既出{duplicates_removed}件除外）")
     else:
         print()
-    print(f"{'='*60}\n")
+    print(f"{'='*60}")
+
+    # Research pillar summary
+    pillar_counts: dict[str, int] = {}
+    method_counts: dict[str, int] = {}
+    for s in top:
+        for pn in s.matched_pillars:
+            pillar_counts[pn] = pillar_counts.get(pn, 0) + 1
+        for mn in s.matched_methods:
+            method_counts[mn] = method_counts.get(mn, 0) + 1
+
+    if pillar_counts:
+        print("\n  研究テーマ別おすすめ:")
+        for name in ["NKT恒常性維持", "NKTワクチン", "整形外科", "骨代謝研究"]:
+            cnt = pillar_counts.get(name, 0)
+            if cnt > 0:
+                print(f"    ■ {name}: {cnt}件")
+
+    if method_counts:
+        print("\n  注目手法:")
+        for m, c in sorted(method_counts.items(), key=lambda x: x[1], reverse=True)[:5]:
+            print(f"    • {m}: {c}件")
+
+    print()
 
     for rank, s in enumerate(top, 1):
         p = s.paper
         topics = ", ".join(s.matched_topics) if s.matched_topics else "General"
+        pillar_str = " / ".join(s.matched_pillars) if s.matched_pillars else ""
+        method_str = ", ".join(s.matched_methods) if s.matched_methods else ""
+
         print(f"  #{rank} [スコア: {s.total_score:.2f}] [{topics}]")
         print(f"     {p.title}")
         print(f"     {p.first_author} et al. | {p.journal} | {p.pub_date}")
+        if pillar_str:
+            print(f"     研究との関連: {pillar_str}")
+        if method_str:
+            print(f"     手法: {method_str}")
+        if s.method_relevance:
+            print(f"     活用: {s.method_relevance}")
         print(f"     {p.url}")
         print()
 
