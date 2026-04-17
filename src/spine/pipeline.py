@@ -21,14 +21,18 @@ def _deduplicate(papers, existing_pmids: set[str]) -> tuple[list, int]:
 
 def execute_spine_pipeline(
     days: int = 7,
-    max_papers: int = 50,
+    max_papers: int = 10,
     post_to_notion: bool = True,
 ) -> dict:
     """Execute the spine weekly review pipeline.
 
+    Selects up to ``max_papers`` papers total, prioritizing ★ interest-area
+    papers first (by interest score), then filling remaining slots with the
+    highest-scoring general papers.
+
     Args:
         days: Number of days to look back.
-        max_papers: Maximum papers to include in the newsletter.
+        max_papers: Maximum papers to include in the newsletter (default 10).
         post_to_notion: Whether to post to Notion.
 
     Returns:
@@ -115,6 +119,7 @@ def execute_spine_pipeline(
             all_papers_for_summary,
             starred_count=len(starred),
             total_count=len(top),
+            total_before_curation=len(scored),
         )
         print("  ✓ 要約完了")
     except ValueError as e:

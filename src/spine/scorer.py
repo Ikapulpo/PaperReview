@@ -371,24 +371,64 @@ class SpineRelevanceScorer:
                 score += 0.10
         return min(score, 1.0)
 
+    # Minimum abstract length for a paper to be treated as a "real" article
+    # (letters, comments, responses typically have no or very short abstracts)
+    MIN_ABSTRACT_LENGTH = 200
+
+    # Title patterns to deprioritize (letters, comments, responses)
+    _LOW_PRIORITY_TITLE_PATTERNS = re.compile(
+        r"^(letter to (the )?editor|"
+        r"comment on|"
+        r"response to|"
+        r"reply to|"
+        r"in reply|"
+        r"erratum|corrigendum|editorial)",
+        re.IGNORECASE,
+    )
+
+    def _is_substantial_paper(self, paper: SpinePaper) -> bool:
+        """Identify real research articles vs letters/comments/responses."""
+        if self._LOW_PRIORITY_TITLE_PATTERNS.match(paper.title.strip()):
+            return False
+        if len(paper.abstract) < self.MIN_ABSTRACT_LENGTH:
+            return False
+        return True
+
     def score_and_rank(self, papers: list[SpinePaper]) -> list[SpineScoredArticle]:
-        """Score all papers and return sorted: ★ first, then non-★."""
+        """Score all papers and return sorted with careful curation.
+
+        Ranking rules:
+          1. ★ (interest area) papers first, ordered by interest score.
+          2. Within each group, substantial articles (with abstracts) outrank
+             letters/comments/responses.
+          3. Non-★ papers follow, ordered by general-topic score.
+        """
         scored = [self.score_paper(p) for p in papers]
 
-        starred = [s for s in scored if s.is_starred]
-        non_starred = [s for s in scored if not s.is_starred]
+        def sort_key_starred(s: SpineScoredArticle):
+            # Primary: substantial paper (True > False)
+            # Secondary: best interest score (descending)
+            return (self._is_substantial_paper(s.paper), s.best_interest_score)
 
-        # Sort within each group by interest score (starred) or general score (non-starred)
-        starred.sort(key=lambda x: x.best_interest_score, reverse=True)
-        non_starred.sort(
-            key=lambda x: max(x.general_scores.values()) if x.general_scores else 0,
-            reverse=True,
+        def sort_key_general(s: SpineScoredArticle):
+            max_general = max(s.general_scores.values()) if s.general_scores else 0
+            return (self._is_substantial_paper(s.paper), max_general)
+
+        starred = sorted(
+            [s for s in scored if s.is_starred], key=sort_key_starred, reverse=True
+        )
+        non_starred = sorted(
+            [s for s in scored if not s.is_starred], key=sort_key_general, reverse=True
         )
 
         result = starred + non_starred
         if result:
+            substantial_star = sum(
+                1 for s in starred if self._is_substantial_paper(s.paper)
+            )
             logger.info(
                 f"Scored {len(result)} papers: "
-                f"{len(starred)} ★ (interest), {len(non_starred)} general"
+                f"{len(starred)} ★ ({substantial_star} substantial), "
+                f"{len(non_starred)} general"
             )
         return result

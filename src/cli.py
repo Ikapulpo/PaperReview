@@ -166,14 +166,14 @@ def main():
     # spine run
     p_spine_run = spine_sub.add_parser("run", help="脊椎論文レビューを実行")
     p_spine_run.add_argument("--days", type=int, default=7, help="検索日数 (デフォルト: 7)")
-    p_spine_run.add_argument("--max-papers", type=int, default=50, help="最大表示論文数 (デフォルト: 50)")
+    p_spine_run.add_argument("--max-papers", type=int, default=10, help="最大表示論文数 (デフォルト: 10 — 厳選)")
     p_spine_run.add_argument("--no-notion", action="store_true", help="Notion投稿をスキップ")
     p_spine_run.set_defaults(func=cmd_spine_run)
 
     # spine search
     p_spine_search = spine_sub.add_parser("search", help="脊椎ジャーナル検索のみ")
     p_spine_search.add_argument("--days", type=int, default=7, help="検索日数 (デフォルト: 7)")
-    p_spine_search.add_argument("--max-papers", type=int, default=50, help="最大表示論文数 (デフォルト: 50)")
+    p_spine_search.add_argument("--max-papers", type=int, default=10, help="最大表示論文数 (デフォルト: 10 — 厳選)")
     p_spine_search.set_defaults(func=cmd_spine_search)
 
     # spine schedule

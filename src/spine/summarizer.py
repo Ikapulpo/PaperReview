@@ -125,34 +125,45 @@ class SpineSummarizer:
         papers: list[SpinePaper],
         starred_count: int,
         total_count: int,
+        total_before_curation: int = 0,
     ) -> str:
-        """Generate a witty, insightful weekly opening comment."""
+        """Generate a witty, insightful weekly opening comment.
+
+        The comment should acknowledge that the list is a curated selection
+        (厳選) from a larger pool of new papers.
+        """
         if not papers:
             return (
                 "今週は対象ジャーナルからの新規論文はありませんでした。"
                 "静かな一週間ですが、次号をお楽しみに。"
             )
 
-        # Build a brief summary of this week's papers for Claude
         highlights = []
-        for p in papers[:15]:
-            star = "★" if hasattr(p, "_starred") else ""
-            highlights.append(f"{star}{p.title} ({p.journal})")
+        for p in papers:
+            highlights.append(f"- {p.title} ({p.journal})")
+
+        curation_note = ""
+        if total_before_curation > total_count:
+            curation_note = (
+                f"（今週の新着{total_before_curation}件から{total_count}件に厳選）"
+            )
 
         prompt = (
             "あなたは脊椎外科の週刊論文レビュー「週刊スパイン」の編集者です。\n"
-            "今週の論文リストを見て、読者（脊椎外科医）に向けた冒頭コメントを"
-            "2〜4文で書いてください。\n\n"
+            "今週、対象ジャーナル（Spine / The Spine Journal / European Spine Journal / "
+            "JNS: Spine / Global Spine Journal / JBJS）から厳選した論文のタイトルを見て、"
+            "読者（脊椎外科医）に向けた冒頭コメントを書いてください。\n\n"
             "条件:\n"
-            "- 気の利いた、読みたくなるような文体で\n"
-            "- 今週の傾向やハイライトに軽く触れる\n"
-            "- 堅すぎず、かといってカジュアルすぎず\n"
-            "- 絵文字は使わない\n"
-            f"- 今週の新規論文: {total_count}件"
+            "- 2〜4文、100〜180字程度\n"
+            "- 気の利いた、読みたくなるような文体で（堅すぎず、かといってカジュアルすぎず）\n"
+            "- 今週の傾向や共通テーマ、注目の1本に軽く触れる\n"
+            "- 「厳選」であることを必要に応じてさりげなく示す\n"
+            "- 絵文字・ハッシュタグは使わない\n"
+            f"- 今週の掲載論文: {total_count}件{curation_note}"
         )
         if starred_count > 0:
-            prompt += f"（うち関心領域: {starred_count}件）"
-        prompt += "\n\n今週の論文タイトル:\n" + "\n".join(highlights)
+            prompt += f"（うち関心領域★: {starred_count}件）"
+        prompt += "\n\n今週の厳選論文タイトル:\n" + "\n".join(highlights)
 
         try:
             response = self.client.messages.create(
