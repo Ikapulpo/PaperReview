@@ -34,6 +34,9 @@ class Paper:
     doi: str = ""
     keywords: list[str] = field(default_factory=list)
     mesh_terms: list[str] = field(default_factory=list)
+    volume: str = ""
+    issue: str = ""
+    affiliation: str = ""
 
     @property
     def url(self) -> str:
@@ -188,6 +191,18 @@ class PubMedClient:
         else:
             pub_date = ""
 
+        # Volume / Issue
+        volume = article.findtext(".//Journal/JournalIssue/Volume", "")
+        issue = article.findtext(".//Journal/JournalIssue/Issue", "")
+
+        # First author affiliation
+        affiliation = ""
+        first_author_elem = article.find(".//AuthorList/Author")
+        if first_author_elem is not None:
+            aff_elem = first_author_elem.find(".//AffiliationInfo/Affiliation")
+            if aff_elem is not None and aff_elem.text:
+                affiliation = aff_elem.text
+
         # DOI
         doi = ""
         for id_elem in article.findall(".//ArticleId"):
@@ -218,6 +233,9 @@ class PubMedClient:
             doi=doi,
             keywords=keywords,
             mesh_terms=mesh_terms,
+            volume=volume,
+            issue=issue,
+            affiliation=affiliation,
         )
 
     def search_and_fetch(self, days: int = 7) -> list[Paper]:
