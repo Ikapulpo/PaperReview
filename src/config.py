@@ -24,5 +24,13 @@ class Config:
     schedule_day: str = os.getenv("SCHEDULE_DAY", "monday")
     schedule_time: str = os.getenv("SCHEDULE_TIME", "09:00")
 
+    # Spine
+    spine_notion_database_id: str = os.getenv(
+        "SPINE_NOTION_DATABASE_ID", "cec3526e-3831-4769-a814-d8993576ad5e"
+    )
+    anthropic_api_key: str = os.getenv("ANTHROPIC_API_KEY", "")
+    spine_schedule_day: str = os.getenv("SPINE_SCHEDULE_DAY", "monday")
+    spine_schedule_time: str = os.getenv("SPINE_SCHEDULE_TIME", "09:00")
+
 
 config = Config()
