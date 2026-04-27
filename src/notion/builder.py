@@ -126,7 +126,7 @@ def _build_intro_text(
         )
 
     date_range = _date_range(days)
-    parts.append(f"検索期間: {date_range} \\| 新規論文: {n}件")
+    parts.append(f"検索期間: {date_range} | 新規論文: {n}件")
     if duplicates_removed > 0:
         parts[-1] += f"（既出{duplicates_removed}件を除外）"
 
@@ -139,26 +139,26 @@ def _build_highlights_text(scored_papers: list[ScoredArticle]) -> str:
         icon = "🎯" if s.total_score >= 0.6 else "⭐" if s.total_score >= 0.3 else "📊"
         topic_str = " / ".join(s.matched_topics[:2]) if s.matched_topics else "General"
         lines.append(
-            f"• {icon} \\[{_escape_md(topic_str)}\\] "
-            f"{_escape_md(s.paper.title[:100])} "
-            f"({s.paper.first_author} et al., {_escape_md(s.paper.journal)})"
+            f"• {icon} [{topic_str}] "
+            f"{s.paper.title[:100]} "
+            f"({s.paper.first_author} et al., {s.paper.journal})"
         )
     return "\n".join(lines)
 
 
 def _build_body_text(scored_papers: list[ScoredArticle]) -> str:
+    """Build Body (JP) property text. Plain text, no Markdown escaping."""
     sections = []
     for i, s in enumerate(scored_papers, 1):
         p = s.paper
         topic_tags = ", ".join(s.matched_topics) if s.matched_topics else "General"
         lines = [
             f"── #{i} ──",
-            _escape_md(p.title),
-            f"{p.first_author} et al. \\| {_escape_md(p.journal)} \\| {p.pub_date}",
-            f"Topics: {_escape_md(topic_tags)} \\| Score: {s.total_score:.2f}",
+            p.title,
+            f"{p.first_author} et al. | {p.journal} | {p.pub_date}",
+            f"Topics: {topic_tags} | Score: {s.total_score:.2f}",
         ]
 
-        # Research area stars
         area_parts = []
         for area in AREA_ORDER:
             score = s.research_area_scores.get(area, 0)
@@ -167,18 +167,13 @@ def _build_body_text(scored_papers: list[ScoredArticle]) -> str:
         if area_parts:
             lines.append(f"研究軸: {' / '.join(area_parts)}")
 
-        # Methods
         if s.matched_methods:
             lines.append(f"手法: {', '.join(s.matched_methods)}")
 
-        # Recommendation
         if s.recommendation_reason:
             lines.append(f"応用可能性: {s.recommendation_reason}")
 
-        lines.append(
-            f"PMID: {p.pmid} \\| "
-            f"[{p.url}]({p.url})"
-        )
+        lines.append(f"PMID: {p.pmid} | {p.url}")
         if p.doi:
             lines.append(f"DOI: {p.doi}")
 
@@ -188,14 +183,15 @@ def _build_body_text(scored_papers: list[ScoredArticle]) -> str:
 
 
 def _build_papers_list_text(scored_papers: list[ScoredArticle]) -> str:
+    """Build Papers (list) property text. Plain text."""
     lines = []
     for s in scored_papers:
         p = s.paper
-        parts = [f"• {_escape_md(p.title)}"]
+        parts = [f"• {p.title}"]
         parts.append(f"  PMID: {p.pmid}")
         if p.doi:
             parts.append(f"  DOI: {p.doi}")
-        parts.append(f"  URL: [{p.url}]({p.url})")
+        parts.append(f"  URL: {p.url}")
         lines.append("\n".join(parts))
     return "\n".join(lines)
 
