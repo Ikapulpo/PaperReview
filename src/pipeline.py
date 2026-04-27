@@ -10,26 +10,14 @@ logger = logging.getLogger(__name__)
 
 
 def _deduplicate(papers, existing_pmids: set[str]) -> tuple[list, int]:
-    """Remove papers whose PMIDs are already in Notion.
-
-    Returns (new_papers, num_removed).
-    """
+    """Remove papers whose PMIDs are already in Notion."""
     new_papers = [p for p in papers if p.pmid not in existing_pmids]
     removed = len(papers) - len(new_papers)
     return new_papers, removed
 
 
 def execute_pipeline(days: int = 7, max_papers: int = 20, post_to_notion: bool = True) -> dict:
-    """Execute the full weekly review pipeline.
-
-    Args:
-        days: Number of days to look back.
-        max_papers: Maximum papers to include in the newsletter.
-        post_to_notion: Whether to post to Notion.
-
-    Returns:
-        Summary dict.
-    """
+    """Execute the full weekly review pipeline."""
     start_time = datetime.now()
     logger.info(f"=== Pipeline start: {start_time.isoformat()} ===")
 
@@ -49,6 +37,7 @@ def execute_pipeline(days: int = 7, max_papers: int = 20, post_to_notion: bool =
 
     # Step 2: Deduplicate against existing Notion entries
     duplicates_removed = 0
+    notion = None
     if post_to_notion:
         print("🔄 過去の投稿と重複チェック中...")
         try:
@@ -67,7 +56,7 @@ def execute_pipeline(days: int = 7, max_papers: int = 20, post_to_notion: bool =
     # Step 3: Score and rank
     if not papers:
         print("\n📭 すべての論文が過去に取り上げ済みでした。新規論文はありません。")
-        if post_to_notion:
+        if post_to_notion and notion:
             try:
                 notion_url = notion.post_weekly_issue(
                     [], days=days,
@@ -84,7 +73,7 @@ def execute_pipeline(days: int = 7, max_papers: int = 20, post_to_notion: bool =
             "posted": True,
         }
 
-    print("📊 関連度スコアリング中...")
+    print("📊 関連度スコアリング中（トピック・手法・研究領域）...")
     scorer = RelevanceScorer()
     scored = scorer.score_and_rank(papers)
     top = scored[:max_papers]
@@ -92,13 +81,12 @@ def execute_pipeline(days: int = 7, max_papers: int = 20, post_to_notion: bool =
     # Display results
     top_score = top[0].total_score if top else 0
 
-    # Smart opening comment
-    print(f"\n{'='*60}")
-    if top_score >= 0.8:
+    print(f"\n{'='*64}")
+    if top_score >= 0.6:
         print("  🎯 今週は当たり週！ 研究に直結しそうな論文あり")
-    elif top_score >= 0.5:
+    elif top_score >= 0.3:
         print("  ⭐ 今週は注目論文あり — チェック推奨")
-    elif top_score >= 0.2:
+    elif top_score >= 0.15:
         print("  📝 今週はそこそこ関連論文あり")
     elif len(top) <= 2:
         print("  📭 今週は少なめ — 次週に期待")
@@ -109,22 +97,43 @@ def execute_pipeline(days: int = 7, max_papers: int = 20, post_to_notion: bool =
         print(f"（既出{duplicates_removed}件除外）")
     else:
         print()
-    print(f"{'='*60}\n")
+    print(f"{'='*64}\n")
 
     for rank, s in enumerate(top, 1):
         p = s.paper
         topics = ", ".join(s.matched_topics) if s.matched_topics else "General"
+
         print(f"  #{rank} [スコア: {s.total_score:.2f}] [{topics}]")
         print(f"     {p.title}")
         print(f"     {p.first_author} et al. | {p.journal} | {p.pub_date}")
         print(f"     {p.url}")
+
+        # Show research area connections
+        if s.matched_areas:
+            areas_str = ", ".join(
+                f"{a} ({s.research_area_scores[a]:.2f})" for a in s.matched_areas
+            )
+            print(f"     📌 研究領域: {areas_str}")
+
+        # Show detected methods
+        if s.matched_methods:
+            print(f"     🔬 手法: {', '.join(s.matched_methods)}")
+
+        # Show recommendation reason (first line only for console)
+        if s.recommendation_reason:
+            first_line = s.recommendation_reason.split("\n")[0]
+            print(f"     💡 {first_line}")
+
         print()
 
     # Step 4: Post to Notion
     notion_url = ""
     if post_to_notion:
-        print("📝 Notionに投稿中（週刊NKTメルマガ）...")
+        print("📝 Notionに投稿中（週刊NKT）...")
         try:
+            if notion is None:
+                from src.notion.client import NotionClient
+                notion = NotionClient()
             notion_url = notion.post_weekly_issue(
                 top, days=days,
                 total_before_dedup=total_found,
