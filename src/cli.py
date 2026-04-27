@@ -21,6 +21,7 @@ def cmd_run(args):
         days=args.days,
         max_papers=args.max_papers,
         post_to_notion=not args.no_notion,
+        export_json=args.export,
     )
     if result["papers_found"] == 0:
         print("\n論文が見つかりませんでした。検索期間を広げてみてください (--days)")
@@ -33,7 +34,22 @@ def cmd_search(args):
         days=args.days,
         max_papers=args.max_papers,
         post_to_notion=False,
+        export_json=args.export,
     )
+
+
+def cmd_export(args):
+    """Search, score, and export Notion-ready JSON (no SDK posting)."""
+    from src.pipeline import execute_pipeline
+    result = execute_pipeline(
+        days=args.days,
+        max_papers=args.max_papers,
+        post_to_notion=False,
+        export_json=True,
+    )
+    if result.get("export_path"):
+        print(f"\n✓ JSON出力: {result['export_path']}")
+        print("  → Notion MCPツール (notion-create-pages) で投稿してください")
 
 
 def cmd_schedule(args):
@@ -57,6 +73,8 @@ def cmd_verify(args):
             sys.exit(1)
     except ValueError as e:
         print(f"✗ 設定エラー: {e}")
+        print("  💡 NOTION_API_KEYが未設定の場合はMCPツール経由で投稿できます")
+        print("     paper-review export で Notion MCP用JSONを出力してください")
         sys.exit(1)
 
 
@@ -67,9 +85,10 @@ def main():
         epilog="""\
 使用例:
   paper-review run                  今すぐ実行 (PubMed検索 + Notion投稿)
-  paper-review run --days 14        過去14日間の論文を検索
+  paper-review run --export         実行 + Notion MCP用JSONエクスポート
   paper-review run --no-notion      Notion投稿なしで検索のみ
-  paper-review search               PubMed検索のみ (Notion投稿なし)
+  paper-review search               PubMed検索のみ
+  paper-review export               検索 + JSON出力 (MCP経由でNotion投稿)
   paper-review schedule             毎週自動実行スケジューラを起動
   paper-review verify               Notion接続テスト
 """,
@@ -83,13 +102,21 @@ def main():
     p_run.add_argument("--days", type=int, default=7, help="検索日数 (デフォルト: 7)")
     p_run.add_argument("--max-papers", type=int, default=20, help="最大表示論文数 (デフォルト: 20)")
     p_run.add_argument("--no-notion", action="store_true", help="Notion投稿をスキップ")
+    p_run.add_argument("--export", action="store_true", help="Notion MCP用JSONもエクスポート")
     p_run.set_defaults(func=cmd_run)
 
     # search
     p_search = subparsers.add_parser("search", help="PubMed検索のみ")
     p_search.add_argument("--days", type=int, default=7, help="検索日数 (デフォルト: 7)")
     p_search.add_argument("--max-papers", type=int, default=20, help="最大表示論文数 (デフォルト: 20)")
+    p_search.add_argument("--export", action="store_true", help="Notion MCP用JSONもエクスポート")
     p_search.set_defaults(func=cmd_search)
+
+    # export
+    p_export = subparsers.add_parser("export", help="Notion MCP用JSONをエクスポート")
+    p_export.add_argument("--days", type=int, default=7, help="検索日数 (デフォルト: 7)")
+    p_export.add_argument("--max-papers", type=int, default=20, help="最大表示論文数 (デフォルト: 20)")
+    p_export.set_defaults(func=cmd_export)
 
     # schedule
     p_schedule = subparsers.add_parser("schedule", help="スケジューラ起動")
