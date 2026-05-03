@@ -19,10 +19,13 @@ class Config:
     notion_database_id: str = os.getenv(
         "NOTION_DATABASE_ID", "a1f5b30f-0402-4ddf-a872-c42622d9c27c"
     )
+    spine_notion_database_id: str = os.getenv("SPINE_NOTION_DATABASE_ID", "")
 
     # Schedule
     schedule_day: str = os.getenv("SCHEDULE_DAY", "monday")
     schedule_time: str = os.getenv("SCHEDULE_TIME", "09:00")
+    spine_schedule_day: str = os.getenv("SPINE_SCHEDULE_DAY", "monday")
+    spine_schedule_time: str = os.getenv("SPINE_SCHEDULE_TIME", "09:00")
 
 
 config = Config()
