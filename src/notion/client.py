@@ -263,6 +263,10 @@ class NotionClient:
             ]
             if p.doi:
                 section.append(f"DOI: {p.doi}")
+            if s.matched_methods:
+                section.append(f"Methods: {', '.join(s.matched_methods)}")
+            if s.concept_bridges:
+                section.append(f"おすすめ理由: {s.concept_bridges[0][:200]}")
             if p.abstract:
                 excerpt = p.abstract[:300]
                 if len(p.abstract) > 300:
@@ -446,11 +450,27 @@ class NotionClient:
                 f"Score: {s.total_score:.2f} | "
                 f"Topics: {', '.join(s.matched_topics) if s.matched_topics else 'General'}"
             )
+            if s.matched_methods:
+                meta += f"\nMethods: {', '.join(s.matched_methods)}"
             blocks.append({
                 "object": "block",
                 "type": "paragraph",
                 "paragraph": {"rich_text": _rich_text(meta)},
             })
+
+            # Concept bridge callout
+            if s.concept_bridges:
+                bridge_text = "\n".join(
+                    f"• {b[:150]}" for b in s.concept_bridges[:3]
+                )
+                blocks.append({
+                    "object": "block",
+                    "type": "callout",
+                    "callout": {
+                        "rich_text": _rich_text(bridge_text),
+                        "icon": {"type": "emoji", "emoji": "🔗"},
+                    },
+                })
 
             blocks.append({
                 "object": "block",

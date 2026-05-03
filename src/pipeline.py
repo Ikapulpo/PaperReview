@@ -49,6 +49,7 @@ def execute_pipeline(days: int = 7, max_papers: int = 20, post_to_notion: bool =
 
     # Step 2: Deduplicate against existing Notion entries
     duplicates_removed = 0
+    notion = None
     if post_to_notion:
         print("🔄 過去の投稿と重複チェック中...")
         try:
@@ -67,7 +68,7 @@ def execute_pipeline(days: int = 7, max_papers: int = 20, post_to_notion: bool =
     # Step 3: Score and rank
     if not papers:
         print("\n📭 すべての論文が過去に取り上げ済みでした。新規論文はありません。")
-        if post_to_notion:
+        if post_to_notion and notion is not None:
             try:
                 notion_url = notion.post_weekly_issue(
                     [], days=days,
@@ -117,6 +118,10 @@ def execute_pipeline(days: int = 7, max_papers: int = 20, post_to_notion: bool =
         print(f"  #{rank} [スコア: {s.total_score:.2f}] [{topics}]")
         print(f"     {p.title}")
         print(f"     {p.first_author} et al. | {p.journal} | {p.pub_date}")
+        if s.matched_methods:
+            print(f"     手法: {', '.join(s.matched_methods)}")
+        if s.concept_bridges:
+            print(f"     接点: {s.concept_bridges[0][:100]}")
         print(f"     {p.url}")
         print()
 
@@ -125,6 +130,9 @@ def execute_pipeline(days: int = 7, max_papers: int = 20, post_to_notion: bool =
     if post_to_notion:
         print("📝 Notionに投稿中（週刊NKTメルマガ）...")
         try:
+            if notion is None:
+                from src.notion.client import NotionClient
+                notion = NotionClient()
             notion_url = notion.post_weekly_issue(
                 top, days=days,
                 total_before_dedup=total_found,
