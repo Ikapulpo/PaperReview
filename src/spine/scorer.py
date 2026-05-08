@@ -39,25 +39,17 @@ INTEREST_PROFILES: dict[str, dict] = {
             "predictive analytics",
         ],
         "secondary": [
-            "AI",
-            "ML",
             "CNN",
             "RNN",
             "XGBoost",
             "support vector machine",
-            "logistic regression model",
             "decision tree",
             "radiomics",
             "deep neural",
-            "classification algorithm",
-            "prediction model",
-            "nomogram",
             "BERT",
             "foundation model",
         ],
         "context": [
-            "algorithm",
-            "prediction",
             "automated",
             "computational",
         ],
@@ -98,8 +90,6 @@ INTEREST_PROFILES: dict[str, dict] = {
         ],
         "context": [
             "indication",
-            "selection",
-            "decision",
             "appropriateness",
         ],
     },
@@ -226,9 +216,6 @@ INTEREST_PROFILES: dict[str, dict] = {
             "rhBMP-2",
         ],
         "context": [
-            "material",
-            "implant",
-            "graft",
             "coating",
             "porosity",
             "mechanical properties",
@@ -255,7 +242,8 @@ class SpineScoredArticle:
 
 
 def _text_contains(text: str, keyword: str) -> bool:
-    return bool(re.search(re.escape(keyword), text, re.IGNORECASE))
+    pattern = r"\b" + re.escape(keyword) + r"\b"
+    return bool(re.search(pattern, text, re.IGNORECASE))
 
 
 def _build_searchable_text(paper: SpinePaper) -> str:
@@ -272,7 +260,7 @@ def _build_searchable_text(paper: SpinePaper) -> str:
 class SpineScorer:
 
     TITLE_MULTIPLIER = 2.0
-    SCORE_THRESHOLD = 0.15
+    SCORE_THRESHOLD = 0.25
 
     def score_paper(self, paper: SpinePaper) -> SpineScoredArticle:
         result = SpineScoredArticle(paper=paper)
