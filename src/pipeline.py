@@ -118,6 +118,12 @@ def execute_pipeline(days: int = 7, max_papers: int = 20, post_to_notion: bool =
         print(f"     {p.title}")
         print(f"     {p.first_author} et al. | {p.journal} | {p.pub_date}")
         print(f"     {p.url}")
+        if s.recommendation_reason:
+            print(f"     💡 {s.recommendation_reason}")
+        if s.matched_methods:
+            print(f"     🔬 手法: {', '.join(s.matched_methods)}")
+        if s.matched_concepts:
+            print(f"     🧬 コンセプト: {', '.join(s.matched_concepts)}")
         print()
 
     # Step 4: Post to Notion

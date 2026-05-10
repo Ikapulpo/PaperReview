@@ -263,6 +263,12 @@ class NotionClient:
             ]
             if p.doi:
                 section.append(f"DOI: {p.doi}")
+            if s.recommendation_reason:
+                section.append(f"\n💡 おすすめ理由: {s.recommendation_reason}")
+            if s.concept_connections:
+                section.append("コンセプト接点: " + " / ".join(s.concept_connections))
+            if s.method_connections:
+                section.append("手法の応用: " + " / ".join(s.method_connections))
             if p.abstract:
                 excerpt = p.abstract[:300]
                 if len(p.abstract) > 300:
@@ -451,6 +457,32 @@ class NotionClient:
                 "type": "paragraph",
                 "paragraph": {"rich_text": _rich_text(meta)},
             })
+
+            if s.recommendation_reason:
+                blocks.append({
+                    "object": "block",
+                    "type": "callout",
+                    "callout": {
+                        "rich_text": _rich_text(s.recommendation_reason),
+                        "icon": {"type": "emoji", "emoji": "💡"},
+                    },
+                })
+
+            if s.concept_connections or s.method_connections:
+                connection_lines = []
+                if s.concept_connections:
+                    connection_lines.append("コンセプト接点:")
+                    for c in s.concept_connections:
+                        connection_lines.append(f"  • {c}")
+                if s.method_connections:
+                    connection_lines.append("手法の応用:")
+                    for m in s.method_connections:
+                        connection_lines.append(f"  • {m}")
+                blocks.append({
+                    "object": "block",
+                    "type": "paragraph",
+                    "paragraph": {"rich_text": _rich_text("\n".join(connection_lines))},
+                })
 
             blocks.append({
                 "object": "block",
