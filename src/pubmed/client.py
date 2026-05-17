@@ -34,6 +34,9 @@ class Paper:
     doi: str = ""
     keywords: list[str] = field(default_factory=list)
     mesh_terms: list[str] = field(default_factory=list)
+    affiliation: str = ""
+    volume: str = ""
+    issue: str = ""
 
     @property
     def url(self) -> str:
@@ -42,6 +45,16 @@ class Paper:
     @property
     def first_author(self) -> str:
         return self.authors[0] if self.authors else "Unknown"
+
+    @property
+    def journal_vol_issue(self) -> str:
+        parts = [self.journal]
+        if self.volume:
+            vi = self.volume
+            if self.issue:
+                vi += f"({self.issue})"
+            parts.append(vi)
+        return " ".join(parts)
 
 
 class PubMedClient:
