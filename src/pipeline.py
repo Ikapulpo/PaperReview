@@ -1,19 +1,17 @@
-"""Main pipeline: PubMed search → Dedup → Scoring → Notion newsletter post."""
+"""Main pipeline: PubMed search -> Dedup -> Scoring -> Concept/Method Analysis -> Notion newsletter post."""
 
 import logging
 from datetime import datetime
 
 from src.pubmed.client import PubMedClient
 from src.scorer.relevance import RelevanceScorer
+from src.analyzer.concept_mapper import ConceptMethodMapper, PaperAnalysis
 
 logger = logging.getLogger(__name__)
 
 
 def _deduplicate(papers, existing_pmids: set[str]) -> tuple[list, int]:
-    """Remove papers whose PMIDs are already in Notion.
-
-    Returns (new_papers, num_removed).
-    """
+    """Remove papers whose PMIDs are already in Notion."""
     new_papers = [p for p in papers if p.pmid not in existing_pmids]
     removed = len(papers) - len(new_papers)
     return new_papers, removed
@@ -22,13 +20,7 @@ def _deduplicate(papers, existing_pmids: set[str]) -> tuple[list, int]:
 def execute_pipeline(days: int = 7, max_papers: int = 20, post_to_notion: bool = True) -> dict:
     """Execute the full weekly review pipeline.
 
-    Args:
-        days: Number of days to look back.
-        max_papers: Maximum papers to include in the newsletter.
-        post_to_notion: Whether to post to Notion.
-
-    Returns:
-        Summary dict.
+    Returns summary dict.
     """
     start_time = datetime.now()
     logger.info(f"=== Pipeline start: {start_time.isoformat()} ===")
@@ -49,6 +41,7 @@ def execute_pipeline(days: int = 7, max_papers: int = 20, post_to_notion: bool =
 
     # Step 2: Deduplicate against existing Notion entries
     duplicates_removed = 0
+    notion = None
     if post_to_notion:
         print("🔄 過去の投稿と重複チェック中...")
         try:
@@ -64,10 +57,10 @@ def execute_pipeline(days: int = 7, max_papers: int = 20, post_to_notion: bool =
             logger.warning(f"Dedup skipped (Notion not configured): {e}")
             print(f"  ⚠ 重複チェックスキップ: {e}")
 
-    # Step 3: Score and rank
+    # Step 3: Handle case where all papers are duplicates
     if not papers:
         print("\n📭 すべての論文が過去に取り上げ済みでした。新規論文はありません。")
-        if post_to_notion:
+        if post_to_notion and notion:
             try:
                 notion_url = notion.post_weekly_issue(
                     [], days=days,
@@ -84,15 +77,25 @@ def execute_pipeline(days: int = 7, max_papers: int = 20, post_to_notion: bool =
             "posted": True,
         }
 
+    # Step 4: Score and rank
     print("📊 関連度スコアリング中...")
     scorer = RelevanceScorer()
     scored = scorer.score_and_rank(papers)
     top = scored[:max_papers]
 
+    # Step 5: Concept/Method analysis
+    print("🧬 コンセプト・手法の接点分析中...")
+    mapper = ConceptMethodMapper()
+    analyses: list[PaperAnalysis] = []
+    for s in top:
+        analysis = mapper.analyze(s.paper)
+        analyses.append(analysis)
+    print(f"  → {sum(1 for a in analyses if a.concepts)}件にコンセプト接点を検出")
+    print(f"  → {sum(1 for a in analyses if a.methods)}件に手法の応用可能性を検出")
+
     # Display results
     top_score = top[0].total_score if top else 0
 
-    # Smart opening comment
     print(f"\n{'='*60}")
     if top_score >= 0.8:
         print("  🎯 今週は当たり週！ 研究に直結しそうな論文あり")
@@ -111,24 +114,33 @@ def execute_pipeline(days: int = 7, max_papers: int = 20, post_to_notion: bool =
         print()
     print(f"{'='*60}\n")
 
-    for rank, s in enumerate(top, 1):
+    for rank, (s, analysis) in enumerate(zip(top, analyses), 1):
         p = s.paper
         topics = ", ".join(s.matched_topics) if s.matched_topics else "General"
         print(f"  #{rank} [スコア: {s.total_score:.2f}] [{topics}]")
         print(f"     {p.title}")
         print(f"     {p.first_author} et al. | {p.journal} | {p.pub_date}")
+        if analysis.recommendation_text:
+            print(f"     💡 {analysis.recommendation_text}")
+        if analysis.concepts:
+            for c in analysis.concepts[:2]:
+                print(f"       コンセプト: [{c.theme}] {c.explanation}")
+        if analysis.methods:
+            for m in analysis.methods[:2]:
+                print(f"       手法: [{m.technique}] {m.explanation}")
         print(f"     {p.url}")
         print()
 
-    # Step 4: Post to Notion
+    # Step 6: Post to Notion
     notion_url = ""
-    if post_to_notion:
+    if post_to_notion and notion:
         print("📝 Notionに投稿中（週刊NKTメルマガ）...")
         try:
             notion_url = notion.post_weekly_issue(
                 top, days=days,
                 total_before_dedup=total_found,
                 duplicates_removed=duplicates_removed,
+                analyses=analyses,
             )
             print(f"  ✓ Notion投稿完了: {notion_url}")
         except ValueError as e:

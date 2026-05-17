@@ -99,6 +99,8 @@ PaperReview/
 │   │   └── client.py        # PubMed E-utilities クライアント
 │   ├── scorer/
 │   │   └── relevance.py     # 関連度スコアリングエンジン（13トピック）
+│   ├── analyzer/
+│   │   └── concept_mapper.py # コンセプト・手法接点分析エンジン
 │   ├── notion/
 │   │   └── client.py        # Notionメルマガ投稿クライアント
 │   └── scheduler/

@@ -8,7 +8,7 @@ Creates one page per weekly issue (newsletter format):
   - Topics (multi_select): aggregated from all papers
   - Intro (JP) (text): smart commentary + overall summary
   - Highlights (text): bullet-point headlines
-  - Body (JP) (text): per-paper short summaries
+  - Body (JP) (text): per-paper short summaries with concept/method connections
   - Papers (list) (text): title/PMID/DOI/URL list
 """
 
@@ -22,6 +22,7 @@ from notion_client.errors import APIResponseError
 
 from src.config import config
 from src.scorer.relevance import ScoredArticle
+from src.analyzer.concept_mapper import PaperAnalysis
 
 logger = logging.getLogger(__name__)
 
@@ -248,7 +249,11 @@ class NotionClient:
             )
         return "\n".join(lines)
 
-    def _build_body(self, scored_papers: list[ScoredArticle]) -> str:
+    def _build_body(
+        self,
+        scored_papers: list[ScoredArticle],
+        analyses: list[PaperAnalysis] | None = None,
+    ) -> str:
         sections = []
         for i, s in enumerate(scored_papers, 1):
             p = s.paper
@@ -263,6 +268,23 @@ class NotionClient:
             ]
             if p.doi:
                 section.append(f"DOI: {p.doi}")
+
+            # Add concept/method analysis
+            if analyses and i <= len(analyses):
+                analysis = analyses[i - 1]
+                if analysis.recommendation_text:
+                    section.append(f"\n💡 おすすめ理由: {analysis.recommendation_text}")
+                if analysis.concepts:
+                    concepts_str = " / ".join(
+                        f"[{c.theme}] {c.explanation}" for c in analysis.concepts[:3]
+                    )
+                    section.append(f"コンセプト接点: {concepts_str}")
+                if analysis.methods:
+                    methods_str = " / ".join(
+                        f"[{m.technique}] {m.explanation}" for m in analysis.methods[:3]
+                    )
+                    section.append(f"手法の応用: {methods_str}")
+
             if p.abstract:
                 excerpt = p.abstract[:300]
                 if len(p.abstract) > 300:
@@ -304,6 +326,7 @@ class NotionClient:
         days: int = 7,
         total_before_dedup: int = 0,
         duplicates_removed: int = 0,
+        analyses: list[PaperAnalysis] | None = None,
     ) -> str:
         """Post a weekly newsletter issue to the Notion database."""
         if not self.database_id:
@@ -329,7 +352,7 @@ class NotionClient:
 
         intro = self._build_intro(scored_papers, total_before_dedup, duplicates_removed)
         highlights = self._build_highlights(scored_papers)
-        body = self._build_body(scored_papers)
+        body = self._build_body(scored_papers, analyses)
         papers_list = self._build_papers_list(scored_papers)
         all_topics = self._collect_all_topics(scored_papers)
 
@@ -345,7 +368,7 @@ class NotionClient:
             "Papers (list)": {"rich_text": _rich_text(papers_list)},
         }
 
-        children = self._build_page_blocks(scored_papers, intro)
+        children = self._build_page_blocks(scored_papers, intro, analyses)
 
         try:
             time.sleep(self.RATE_LIMIT_DELAY)
@@ -392,8 +415,9 @@ class NotionClient:
         self,
         scored_papers: list[ScoredArticle],
         intro: str,
+        analyses: list[PaperAnalysis] | None = None,
     ) -> list[dict]:
-        """Build rich page body blocks."""
+        """Build rich page body blocks with concept/method analysis."""
         blocks = []
 
         # Weekly comment callout (the smart intro)
@@ -435,6 +459,8 @@ class NotionClient:
         # Each paper
         for rank, s in enumerate(scored_papers, 1):
             p = s.paper
+            analysis = analyses[rank - 1] if analyses and rank <= len(analyses) else None
+
             blocks.append({
                 "object": "block",
                 "type": "heading_3",
@@ -451,6 +477,38 @@ class NotionClient:
                 "type": "paragraph",
                 "paragraph": {"rich_text": _rich_text(meta)},
             })
+
+            # Recommendation callout with concept/method analysis
+            if analysis and (analysis.concepts or analysis.methods):
+                rec_parts = []
+                if analysis.recommendation_text:
+                    rec_parts.append(f"💡 **おすすめ理由**: {analysis.recommendation_text}")
+                if analysis.concepts:
+                    rec_parts.append("**コンセプト接点:**")
+                    for c in analysis.concepts[:3]:
+                        rec_parts.append(f"- [{c.theme}] {c.explanation}")
+                if analysis.methods:
+                    rec_parts.append("**手法の応用:**")
+                    for m in analysis.methods[:3]:
+                        rec_parts.append(f"- [{m.technique}] {m.explanation}")
+
+                blocks.append({
+                    "object": "block",
+                    "type": "quote",
+                    "quote": {
+                        "rich_text": _rich_text("\n".join(rec_parts)),
+                    },
+                })
+            elif analysis and analysis.recommendation_text:
+                blocks.append({
+                    "object": "block",
+                    "type": "quote",
+                    "quote": {
+                        "rich_text": _rich_text(
+                            f"ℹ️ {analysis.recommendation_text}"
+                        ),
+                    },
+                })
 
             blocks.append({
                 "object": "block",
@@ -473,6 +531,17 @@ class NotionClient:
                 })
 
             blocks.append({"object": "block", "type": "divider", "divider": {}})
+
+        # Footer
+        blocks.append({
+            "object": "block",
+            "type": "paragraph",
+            "paragraph": {
+                "rich_text": _rich_text(
+                    "Generated by 週刊NKT Paper Review System (Claude Code) — PubMed検索に基づく"
+                ),
+            },
+        })
 
         return blocks
 
