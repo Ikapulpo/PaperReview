@@ -49,25 +49,32 @@ def execute_pipeline(days: int = 7, max_papers: int = 20, post_to_notion: bool =
 
     # Step 2: Deduplicate against existing Notion entries
     duplicates_removed = 0
+    notion = None
     if post_to_notion:
-        print("🔄 過去の投稿と重複チェック中...")
+        from src.notion.client import NotionClient
         try:
-            from src.notion.client import NotionClient
             notion = NotionClient()
-            existing_pmids = notion.get_existing_pmids()
-            papers, duplicates_removed = _deduplicate(papers, existing_pmids)
-            if duplicates_removed > 0:
-                print(f"  → {duplicates_removed}件を既出として除外（残り: {len(papers)}件）")
-            else:
-                print(f"  → 重複なし（{len(papers)}件すべて新規）")
         except ValueError as e:
-            logger.warning(f"Dedup skipped (Notion not configured): {e}")
-            print(f"  ⚠ 重複チェックスキップ: {e}")
+            logger.warning(f"Notion not configured: {e}")
+            print(f"  ⚠ Notion未設定: {e}")
+
+        if notion:
+            print("🔄 過去の投稿と重複チェック中...")
+            try:
+                existing_pmids = notion.get_existing_pmids()
+                papers, duplicates_removed = _deduplicate(papers, existing_pmids)
+                if duplicates_removed > 0:
+                    print(f"  → {duplicates_removed}件を既出として除外（残り: {len(papers)}件）")
+                else:
+                    print(f"  → 重複なし（{len(papers)}件すべて新規）")
+            except Exception as e:
+                logger.warning(f"Dedup skipped: {e}")
+                print(f"  ⚠ 重複チェックスキップ: {e}")
 
     # Step 3: Score and rank
     if not papers:
         print("\n📭 すべての論文が過去に取り上げ済みでした。新規論文はありません。")
-        if post_to_notion:
+        if notion:
             try:
                 notion_url = notion.post_weekly_issue(
                     [], days=days,
@@ -118,11 +125,17 @@ def execute_pipeline(days: int = 7, max_papers: int = 20, post_to_notion: bool =
         print(f"     {p.title}")
         print(f"     {p.first_author} et al. | {p.journal} | {p.pub_date}")
         print(f"     {p.url}")
+        if s.matched_pillars:
+            print(f"     🔬 研究テーマ: {'・'.join(s.matched_pillars)}")
+        if s.matched_methods:
+            print(f"     🧪 手法: {'、'.join(s.matched_methods)}")
+        if s.recommendation_reason:
+            print(f"     💡 {s.recommendation_reason}")
         print()
 
     # Step 4: Post to Notion
     notion_url = ""
-    if post_to_notion:
+    if notion:
         print("📝 Notionに投稿中（週刊NKTメルマガ）...")
         try:
             notion_url = notion.post_weekly_issue(
@@ -131,12 +144,11 @@ def execute_pipeline(days: int = 7, max_papers: int = 20, post_to_notion: bool =
                 duplicates_removed=duplicates_removed,
             )
             print(f"  ✓ Notion投稿完了: {notion_url}")
-        except ValueError as e:
-            logger.warning(f"Notion posting skipped: {e}")
-            print(f"  ⚠ Notion投稿スキップ: {e}")
         except Exception as e:
             logger.error(f"Notion posting failed: {e}", exc_info=True)
             print(f"  ✗ Notion投稿失敗: {e}")
+    elif post_to_notion:
+        print("  ⚠ Notion未設定のためスキップ")
     else:
         print("  (Notion投稿: スキップ)")
 

@@ -191,6 +191,24 @@ class NotionClient:
                 "骨代謝・整形外科研究との接点に注目。"
             )
 
+        # Research pillar summary
+        all_pillars: set[str] = set()
+        for s in scored_papers:
+            all_pillars.update(s.matched_pillars)
+        if all_pillars:
+            comment_parts.append(
+                f"研究テーマとの接点: {'、'.join(sorted(all_pillars))}。"
+            )
+
+        # Method highlights
+        all_methods: set[str] = set()
+        for s in scored_papers:
+            all_methods.update(s.matched_methods)
+        if all_methods:
+            comment_parts.append(
+                f"活用可能な手法: {'、'.join(sorted(all_methods))}。"
+            )
+
         # Top paper callout
         if scored_papers and top_score >= 0.20:
             top = scored_papers[0]
@@ -242,8 +260,9 @@ class NotionClient:
         lines = []
         for s in scored_papers[:10]:
             topic_str = f"[{s.primary_topic}]" if s.matched_topics else ""
+            pillar_str = f" 🔬{'・'.join(s.matched_pillars)}" if s.matched_pillars else ""
             lines.append(
-                f"• {topic_str} {s.paper.title[:100]} "
+                f"• {topic_str}{pillar_str} {s.paper.title[:100]} "
                 f"({s.paper.first_author} et al., {s.paper.journal})"
             )
         return "\n".join(lines)
@@ -263,6 +282,7 @@ class NotionClient:
             ]
             if p.doi:
                 section.append(f"DOI: {p.doi}")
+            section.append(f"おすすめ理由: {s.recommendation_reason}")
             if p.abstract:
                 excerpt = p.abstract[:300]
                 if len(p.abstract) > 300:
@@ -430,6 +450,48 @@ class NotionClient:
             "paragraph": {"rich_text": _rich_text("\n".join(stats_lines))},
         })
 
+        # Research pillar summary
+        pillar_counts: dict[str, int] = {}
+        for s in scored_papers:
+            for p in s.matched_pillars:
+                pillar_counts[p] = pillar_counts.get(p, 0) + 1
+
+        if pillar_counts:
+            blocks.append({
+                "object": "block",
+                "type": "heading_2",
+                "heading_2": {"rich_text": _rich_text("🔬 研究テーマ別ヒット")},
+            })
+            pillar_lines = []
+            for p, c in sorted(pillar_counts.items(), key=lambda x: x[1], reverse=True):
+                pillar_lines.append(f"  • {p}: {c}件")
+            blocks.append({
+                "object": "block",
+                "type": "paragraph",
+                "paragraph": {"rich_text": _rich_text("\n".join(pillar_lines))},
+            })
+
+        # Method summary
+        method_counts: dict[str, int] = {}
+        for s in scored_papers:
+            for m in s.matched_methods:
+                method_counts[m] = method_counts.get(m, 0) + 1
+
+        if method_counts:
+            blocks.append({
+                "object": "block",
+                "type": "heading_2",
+                "heading_2": {"rich_text": _rich_text("🧪 活用可能なメソッド")},
+            })
+            method_lines = []
+            for m, c in sorted(method_counts.items(), key=lambda x: x[1], reverse=True):
+                method_lines.append(f"  • {m}: {c}件")
+            blocks.append({
+                "object": "block",
+                "type": "paragraph",
+                "paragraph": {"rich_text": _rich_text("\n".join(method_lines))},
+            })
+
         blocks.append({"object": "block", "type": "divider", "divider": {}})
 
         # Each paper
@@ -450,6 +512,16 @@ class NotionClient:
                 "object": "block",
                 "type": "paragraph",
                 "paragraph": {"rich_text": _rich_text(meta)},
+            })
+
+            # Recommendation reason callout
+            blocks.append({
+                "object": "block",
+                "type": "callout",
+                "callout": {
+                    "rich_text": _rich_text(s.recommendation_reason),
+                    "icon": {"type": "emoji", "emoji": "💡"},
+                },
             })
 
             blocks.append({

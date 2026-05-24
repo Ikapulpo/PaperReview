@@ -6,6 +6,13 @@ according to the Notion database Topics:
   Metabolism, Tumor immunity, Infection, Methods / Omics,
   Thymus / development, B cell tolerance, Cytokines (IL-4/IFNγ),
   TCR repertoire, scRNA-seq / spatial
+
+Also evaluates method and concept relevance to the lab's four core
+research pillars:
+  1. NKTの恒常性維持機能
+  2. NKTワクチン
+  3. 整形外科
+  4. 骨代謝研究
 """
 
 import logging
@@ -252,6 +259,172 @@ TOPIC_PROFILES: dict[str, dict] = {
 }
 
 
+# ── Method profiles ──────────────────────────────────────────────────────
+# Methods/techniques that could be applied to the lab's research
+
+METHOD_PROFILES: dict[str, dict] = {
+    "flow_cytometry": {
+        "keywords": [
+            "flow cytometry", "FACS", "fluorescence-activated",
+            "spectral flow", "CyTOF", "mass cytometry",
+            "intracellular staining", "surface marker",
+            "cell sorting", "multicolor",
+        ],
+        "label": "フローサイトメトリー",
+    },
+    "single_cell_omics": {
+        "keywords": [
+            "scRNA-seq", "single-cell RNA", "single cell RNA",
+            "CITE-seq", "ATAC-seq", "multiome",
+            "spatial transcriptomics", "Visium",
+            "10x Genomics", "single-cell analysis",
+            "single cell sequencing", "scATAC",
+        ],
+        "label": "シングルセル解析",
+    },
+    "in_vivo_mouse": {
+        "keywords": [
+            "knockout mice", "KO mice", "transgenic mice",
+            "conditional knockout", "Cre-lox", "CreERT2",
+            "bone marrow chimera", "adoptive transfer",
+            "in vivo imaging", "bioluminescence",
+            "lineage tracing", "fate mapping",
+            "parabiosis", "competitive reconstitution",
+        ],
+        "label": "マウスin vivoモデル",
+    },
+    "cell_culture_expansion": {
+        "keywords": [
+            "cell expansion", "ex vivo expansion",
+            "in vitro culture", "cell culture",
+            "stimulation protocol", "co-culture",
+            "feeder cell", "cytokine cocktail",
+            "GMP", "good manufacturing practice",
+            "cell manufacturing",
+        ],
+        "label": "細胞培養・増殖",
+    },
+    "bone_analysis": {
+        "keywords": [
+            "micro-CT", "microCT", "μCT",
+            "bone histomorphometry", "TRAP staining",
+            "ALP staining", "alizarin red",
+            "calcein labeling", "bone mineral density",
+            "BMD", "DXA", "DEXA",
+            "mechanical testing", "three-point bending",
+            "osteoclast assay", "RANKL assay",
+        ],
+        "label": "骨解析",
+    },
+    "clinical_trial": {
+        "keywords": [
+            "clinical trial", "phase I", "phase II", "phase III",
+            "randomized controlled", "RCT",
+            "patient cohort", "clinical study",
+            "dose escalation", "safety profile",
+            "adverse event", "PBMC",
+            "GMP manufacturing",
+        ],
+        "label": "臨床試験",
+    },
+    "immunoassay": {
+        "keywords": [
+            "ELISA", "ELISPOT", "Luminex",
+            "cytokine assay", "multiplex",
+            "intracellular cytokine", "ICS",
+            "cytotoxicity assay", "51Cr release",
+            "chromium release", "killing assay",
+            "CD107a degranulation",
+        ],
+        "label": "免疫アッセイ",
+    },
+    "imaging": {
+        "keywords": [
+            "confocal microscopy", "two-photon",
+            "intravital imaging", "immunofluorescence",
+            "immunohistochemistry", "IHC",
+            "multiplex imaging", "tissue clearing",
+            "light sheet", "PET imaging",
+        ],
+        "label": "イメージング",
+    },
+    "gene_editing": {
+        "keywords": [
+            "CRISPR", "Cas9", "guide RNA", "gRNA",
+            "gene editing", "gene knockout",
+            "lentiviral", "retroviral transduction",
+            "CAR construct", "chimeric antigen receptor",
+        ],
+        "label": "遺伝子編集",
+    },
+}
+
+# ── Research pillar definitions ──────────────────────────────────────────
+# Maps each core research area to concept keywords for recommendation
+
+RESEARCH_PILLARS: dict[str, dict] = {
+    "NKT恒常性維持": {
+        "concept_keywords": [
+            "homeostasis", "homeostatic", "maintenance",
+            "survival", "proliferation", "turnover",
+            "tissue-resident", "tissue resident",
+            "peripheral maintenance", "steady state",
+            "cell death", "apoptosis",
+            "IL-7", "IL-15", "tonic signaling",
+            "self-renewal", "quiescence",
+            "emigration", "retention",
+        ],
+        "description": "NKT細胞が定常状態でどのように維持されるか",
+    },
+    "NKTワクチン": {
+        "concept_keywords": [
+            "vaccine", "vaccination", "adjuvant",
+            "dendritic cell", "antigen presentation",
+            "α-GalCer", "alpha-GalCer", "glycolipid antigen",
+            "cell therapy", "immunotherapy",
+            "adoptive transfer", "CAR-NKT",
+            "anti-tumor", "antitumor",
+            "tumor rejection", "cancer vaccine",
+            "clinical trial", "GMP",
+            "cell expansion", "ex vivo",
+        ],
+        "description": "NKT細胞を利用したがんワクチン・細胞治療",
+    },
+    "整形外科": {
+        "concept_keywords": [
+            "orthopedic", "orthopaedic",
+            "fracture", "fracture healing",
+            "arthroplasty", "joint replacement",
+            "osteoarthritis", "rheumatoid arthritis",
+            "spine", "spinal", "vertebral",
+            "implant", "prosthesis",
+            "surgical", "perioperative",
+            "rehabilitation", "musculoskeletal",
+            "cartilage", "meniscus", "ligament",
+            "tendon", "rotator cuff",
+        ],
+        "description": "整形外科手術・疾患とNKT細胞の関与",
+    },
+    "骨代謝": {
+        "concept_keywords": [
+            "bone metabolism", "bone remodeling",
+            "osteoclast", "osteoblast", "osteocyte",
+            "RANKL", "OPG", "osteoprotegerin",
+            "M-CSF", "RANK",
+            "bone resorption", "bone formation",
+            "osteoporosis", "bone loss",
+            "bone mineral density", "BMD",
+            "calcium", "phosphate",
+            "vitamin D", "PTH", "parathyroid",
+            "Wnt", "BMP", "sclerostin",
+            "glucocorticoid-induced osteoporosis",
+            "bone marrow", "bone marrow niche",
+        ],
+        "description": "骨代謝メカニズムとNKT細胞の役割",
+    },
+}
+
+
 # ── Scored article result ───────────────────────────────────────────────
 
 @dataclass
@@ -261,6 +434,10 @@ class ScoredArticle:
     total_score: float = 0.0
     topic_scores: dict[str, float] = field(default_factory=dict)
     matched_topics: list[str] = field(default_factory=list)
+    matched_methods: list[str] = field(default_factory=list)
+    matched_pillars: list[str] = field(default_factory=list)
+    method_score: float = 0.0
+    pillar_score: float = 0.0
     recommendation_reason: str = ""
 
     @property
@@ -287,6 +464,8 @@ class RelevanceScorer:
 
     TITLE_MULTIPLIER = 2.0
     SCORE_THRESHOLD = 0.15  # minimum to assign a topic
+    METHOD_BONUS = 0.10
+    PILLAR_BONUS = 0.15
 
     def score_paper(self, paper: Paper) -> ScoredArticle:
         result = ScoredArticle(paper=paper)
@@ -298,7 +477,15 @@ class RelevanceScorer:
             if score >= self.SCORE_THRESHOLD:
                 result.matched_topics.append(topic_name)
 
-        result.total_score = max(result.topic_scores.values()) if result.topic_scores else 0.0
+        base_score = max(result.topic_scores.values()) if result.topic_scores else 0.0
+
+        result.matched_methods = self._detect_methods(full_text)
+        result.method_score = min(len(result.matched_methods) * self.METHOD_BONUS, 0.3)
+
+        result.matched_pillars = self._detect_pillars(full_text)
+        result.pillar_score = min(len(result.matched_pillars) * self.PILLAR_BONUS, 0.3)
+
+        result.total_score = min(base_score + result.method_score + result.pillar_score, 1.0)
         result.recommendation_reason = self._generate_reason(result)
         return result
 
@@ -317,10 +504,43 @@ class RelevanceScorer:
                 score += 0.05
         return min(score, 1.0)
 
+    def _detect_methods(self, full_text: str) -> list[str]:
+        matched = []
+        for method_id, profile in METHOD_PROFILES.items():
+            for kw in profile["keywords"]:
+                if _text_contains(full_text, kw):
+                    matched.append(profile["label"])
+                    break
+        return matched
+
+    def _detect_pillars(self, full_text: str) -> list[str]:
+        matched = []
+        for pillar_name, profile in RESEARCH_PILLARS.items():
+            hit_count = sum(
+                1 for kw in profile["concept_keywords"]
+                if _text_contains(full_text, kw)
+            )
+            if hit_count >= 2:
+                matched.append(pillar_name)
+        return matched
+
     def _generate_reason(self, result: ScoredArticle) -> str:
+        parts = []
+
+        if result.matched_pillars:
+            pillar_str = "・".join(result.matched_pillars)
+            parts.append(f"研究テーマとの関連: {pillar_str}")
+
+        if result.matched_methods:
+            method_str = "、".join(result.matched_methods)
+            parts.append(f"活用可能な手法: {method_str}")
+
         if result.matched_topics:
-            return f"Topics: {', '.join(result.matched_topics)}"
-        return "NKT cell related"
+            parts.append(f"トピック: {', '.join(result.matched_topics)}")
+
+        if parts:
+            return " | ".join(parts)
+        return "NKT細胞関連（一般）"
 
     def score_and_rank(self, papers: list[Paper]) -> list[ScoredArticle]:
         scored = [self.score_paper(p) for p in papers]
