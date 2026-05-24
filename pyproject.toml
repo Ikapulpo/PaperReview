@@ -1,7 +1,7 @@
 [project]
 name = "paper-review"
 version = "0.1.0"
-description = "Weekly NKT cell paper review system with PubMed search and Notion integration"
+description = "Weekly paper review system (NKT + Spine) with PubMed search and Notion integration"
 requires-python = ">=3.10"
 dependencies = [
     "requests>=2.31.0",
