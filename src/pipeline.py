@@ -114,10 +114,15 @@ def execute_pipeline(days: int = 7, max_papers: int = 20, post_to_notion: bool =
     for rank, s in enumerate(top, 1):
         p = s.paper
         topics = ", ".join(s.matched_topics) if s.matched_topics else "General"
-        print(f"  #{rank} [スコア: {s.total_score:.2f}] [{topics}]")
+        methods = ", ".join(s.matched_methods) if s.matched_methods else "-"
+        print(f"  #{rank} [総合: {s.total_score:.2f} | 概念: {s.concept_score:.2f} | 手法: {s.method_score:.2f}]")
+        print(f"     [{topics}] [{methods}]")
         print(f"     {p.title}")
         print(f"     {p.first_author} et al. | {p.journal} | {p.pub_date}")
         print(f"     {p.url}")
+        if s.recommendation_reason:
+            for line in s.recommendation_reason.split("\n")[:4]:
+                print(f"     {line}")
         print()
 
     # Step 4: Post to Notion

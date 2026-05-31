@@ -242,9 +242,11 @@ class NotionClient:
         lines = []
         for s in scored_papers[:10]:
             topic_str = f"[{s.primary_topic}]" if s.matched_topics else ""
+            method_str = f"[{s.matched_methods[0]}]" if s.matched_methods else ""
+            score_str = f"({s.total_score:.2f})"
             lines.append(
-                f"• {topic_str} {s.paper.title[:100]} "
-                f"({s.paper.first_author} et al., {s.paper.journal})"
+                f"• {score_str} {topic_str}{method_str} {s.paper.title[:90]} "
+                f"({s.paper.first_author} et al.)"
             )
         return "\n".join(lines)
 
@@ -253,16 +255,23 @@ class NotionClient:
         for i, s in enumerate(scored_papers, 1):
             p = s.paper
             topic_tags = ", ".join(s.matched_topics) if s.matched_topics else "General"
+            method_tags = ", ".join(s.matched_methods) if s.matched_methods else "-"
 
             section = [
                 f"── #{i} ──",
                 f"{p.title}",
                 f"{p.first_author} et al. | {p.journal} | {p.pub_date}",
-                f"Topics: {topic_tags} | Score: {s.total_score:.2f}",
+                f"Topics: {topic_tags} | Methods: {method_tags}",
+                f"Score: {s.total_score:.2f} (概念: {s.concept_score:.2f} / 手法: {s.method_score:.2f})",
                 f"PMID: {p.pmid} | {p.url}",
             ]
             if p.doi:
                 section.append(f"DOI: {p.doi}")
+
+            # Recommendation reasons
+            if s.recommendation_reason:
+                section.append(f"\n★ おすすめ理由:\n{s.recommendation_reason}")
+
             if p.abstract:
                 excerpt = p.abstract[:300]
                 if len(p.abstract) > 300:
@@ -420,9 +429,19 @@ class NotionClient:
             for t in s.matched_topics:
                 topic_counts[t] = topic_counts.get(t, 0) + 1
 
+        method_counts: dict[str, int] = {}
+        for s in scored_papers:
+            for m in s.matched_methods:
+                method_counts[m] = method_counts.get(m, 0) + 1
+
         stats_lines = [f"新規論文数: {len(scored_papers)}"]
+        stats_lines.append("\n【コンセプト別】")
         for t, c in sorted(topic_counts.items(), key=lambda x: x[1], reverse=True):
             stats_lines.append(f"  • {t}: {c}件")
+        if method_counts:
+            stats_lines.append("\n【メソッド別】")
+            for m, c in sorted(method_counts.items(), key=lambda x: x[1], reverse=True):
+                stats_lines.append(f"  • {m}: {c}件")
 
         blocks.append({
             "object": "block",
@@ -443,14 +462,30 @@ class NotionClient:
 
             meta = (
                 f"{p.first_author} et al. | {p.journal} | {p.pub_date}\n"
-                f"Score: {s.total_score:.2f} | "
+                f"Score: {s.total_score:.2f} "
+                f"(概念: {s.concept_score:.2f} / 手法: {s.method_score:.2f})\n"
                 f"Topics: {', '.join(s.matched_topics) if s.matched_topics else 'General'}"
             )
+            if s.matched_methods:
+                meta += f"\nMethods: {', '.join(s.matched_methods)}"
             blocks.append({
                 "object": "block",
                 "type": "paragraph",
                 "paragraph": {"rich_text": _rich_text(meta)},
             })
+
+            # Recommendation callout
+            if s.recommendation_reason:
+                blocks.append({
+                    "object": "block",
+                    "type": "callout",
+                    "callout": {
+                        "rich_text": _rich_text(
+                            f"★ おすすめ理由\n{s.recommendation_reason}"
+                        ),
+                        "icon": {"type": "emoji", "emoji": "🎯"},
+                    },
+                })
 
             blocks.append({
                 "object": "block",
