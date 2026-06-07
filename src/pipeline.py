@@ -10,10 +10,6 @@ logger = logging.getLogger(__name__)
 
 
 def _deduplicate(papers, existing_pmids: set[str]) -> tuple[list, int]:
-    """Remove papers whose PMIDs are already in Notion.
-
-    Returns (new_papers, num_removed).
-    """
     new_papers = [p for p in papers if p.pmid not in existing_pmids]
     removed = len(papers) - len(new_papers)
     return new_papers, removed
@@ -34,7 +30,7 @@ def execute_pipeline(days: int = 7, max_papers: int = 20, post_to_notion: bool =
     logger.info(f"=== Pipeline start: {start_time.isoformat()} ===")
 
     # Step 1: Search PubMed
-    print(f"🔍 PubMed検索中（過去{days}日間のNKT細胞論文）...")
+    print(f"\n🔍 PubMed検索中（過去{days}日間のNKT細胞論文）...")
     pubmed = PubMedClient()
     papers = pubmed.search_and_fetch(days=days)
 
@@ -84,7 +80,7 @@ def execute_pipeline(days: int = 7, max_papers: int = 20, post_to_notion: bool =
             "posted": True,
         }
 
-    print("📊 関連度スコアリング中...")
+    print("📊 関連度スコアリング中（トピック + 手法 + コンセプト解析）...")
     scorer = RelevanceScorer()
     scored = scorer.score_and_rank(papers)
     top = scored[:max_papers]
@@ -92,8 +88,7 @@ def execute_pipeline(days: int = 7, max_papers: int = 20, post_to_notion: bool =
     # Display results
     top_score = top[0].total_score if top else 0
 
-    # Smart opening comment
-    print(f"\n{'='*60}")
+    print(f"\n{'='*70}")
     if top_score >= 0.8:
         print("  🎯 今週は当たり週！ 研究に直結しそうな論文あり")
     elif top_score >= 0.5:
@@ -109,7 +104,7 @@ def execute_pipeline(days: int = 7, max_papers: int = 20, post_to_notion: bool =
         print(f"（既出{duplicates_removed}件除外）")
     else:
         print()
-    print(f"{'='*60}\n")
+    print(f"{'='*70}\n")
 
     for rank, s in enumerate(top, 1):
         p = s.paper
@@ -118,6 +113,21 @@ def execute_pipeline(days: int = 7, max_papers: int = 20, post_to_notion: bool =
         print(f"     {p.title}")
         print(f"     {p.first_author} et al. | {p.journal} | {p.pub_date}")
         print(f"     {p.url}")
+
+        # Show recommendation reason
+        if s.recommendation_reason:
+            for line in s.recommendation_reason.split("\n"):
+                print(f"     💡 {line}")
+
+        # Show method/concept matches
+        if s.matched_methods:
+            print(f"     🔧 手法: {', '.join(s.matched_methods)}")
+        if s.matched_concepts:
+            print(f"     🧠 コンセプト: {', '.join(s.matched_concepts)}")
+        if s.lab_relevance:
+            areas = sorted(s.lab_relevance.keys())
+            print(f"     🏷️  研究テーマ: {', '.join(areas)}")
+
         print()
 
     # Step 4: Post to Notion

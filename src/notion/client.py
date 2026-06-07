@@ -8,7 +8,7 @@ Creates one page per weekly issue (newsletter format):
   - Topics (multi_select): aggregated from all papers
   - Intro (JP) (text): smart commentary + overall summary
   - Highlights (text): bullet-point headlines
-  - Body (JP) (text): per-paper short summaries
+  - Body (JP) (text): per-paper short summaries with recommendation reasons
   - Papers (list) (text): title/PMID/DOI/URL list
 """
 
@@ -35,7 +35,6 @@ def _rich_text(content: str) -> list[dict]:
 
 
 def _extract_text(rich_text_list: list) -> str:
-    """Extract plain text from Notion rich_text property."""
     return "".join(
         t.get("plain_text", "") or t.get("text", {}).get("content", "")
         for t in rich_text_list
@@ -59,11 +58,6 @@ class NotionClient:
     # ── Duplicate detection ─────────────────────────────────────────
 
     def get_existing_pmids(self) -> set[str]:
-        """Fetch all PMIDs already posted in the database.
-
-        Parses the 'Papers (list)' and 'Body (JP)' properties of all
-        existing issues to extract PMIDs.
-        """
         pmids: set[str] = set()
         has_more = True
         start_cursor = None
@@ -82,14 +76,12 @@ class NotionClient:
                 for page in resp.get("results", []):
                     props = page.get("properties", {})
 
-                    # Extract from Papers (list)
                     papers_list_prop = props.get("Papers (list)", {})
                     papers_text = _extract_text(
                         papers_list_prop.get("rich_text", [])
                     )
                     pmids.update(re.findall(r"PMID:\s*(\d+)", papers_text))
 
-                    # Also check Body (JP) as backup
                     body_prop = props.get("Body (JP)", {})
                     body_text = _extract_text(body_prop.get("rich_text", []))
                     pmids.update(re.findall(r"PMID:\s*(\d+)", body_text))
@@ -112,17 +104,13 @@ class NotionClient:
         total_before_dedup: int,
         duplicates_removed: int,
     ) -> str:
-        """Generate a smart, contextual opening comment for the week."""
         n = len(scored_papers)
         top_score = scored_papers[0].total_score if scored_papers else 0
         all_topics = set()
         for s in scored_papers:
             all_topics.update(s.matched_topics)
 
-        # Count papers with high relevance (score >= 0.20)
         high_relevance = sum(1 for s in scored_papers if s.total_score >= 0.20)
-
-        # ── Determine the "mood" of the week ──
 
         if n == 0:
             return (
@@ -132,7 +120,6 @@ class NotionClient:
 
         comment_parts = []
 
-        # Opening: quality assessment
         if top_score >= 0.8 and high_relevance >= 2:
             comment_parts.append(
                 "今週は当たり週です！ "
@@ -162,6 +149,28 @@ class NotionClient:
                 "今週もNKT関連の論文をお届けします。"
             )
 
+        # Lab area summary
+        all_lab_areas: dict[str, int] = {}
+        for s in scored_papers:
+            for area in s.lab_relevance:
+                all_lab_areas[area] = all_lab_areas.get(area, 0) + 1
+
+        if all_lab_areas:
+            top_areas = sorted(all_lab_areas.items(), key=lambda x: x[1], reverse=True)
+            area_strs = [f"{name}({count}件)" for name, count in top_areas]
+            comment_parts.append(
+                f"研究テーマ別: {', '.join(area_strs)}。"
+            )
+
+        # Method highlights
+        all_methods: set[str] = set()
+        for s in scored_papers:
+            all_methods.update(s.matched_methods)
+        if all_methods:
+            comment_parts.append(
+                f"注目手法: {', '.join(sorted(all_methods)[:4])}。"
+            )
+
         # Topic highlights
         lab_core_topics = {
             "iNKT development", "NKT-B cell", "B cell tolerance",
@@ -170,7 +179,7 @@ class NotionClient:
         relevant_core = all_topics & lab_core_topics
         if relevant_core:
             comment_parts.append(
-                f"当研究室のコアテーマに関連: {', '.join(sorted(relevant_core))}。"
+                f"コアテーマ関連: {', '.join(sorted(relevant_core))}。"
             )
 
         vaccine_topics = {"Tumor immunity"}
@@ -194,12 +203,13 @@ class NotionClient:
         # Top paper callout
         if scored_papers and top_score >= 0.20:
             top = scored_papers[0]
+            reason_first_line = top.recommendation_reason.split("\n")[0]
             comment_parts.append(
                 f"\n一番のおすすめ: 「{top.paper.title[:60]}」"
-                f"（{top.paper.first_author} et al., {top.paper.journal}）"
+                f"（{top.paper.first_author} et al.）\n"
+                f"💡 おすすめ理由: {reason_first_line}"
             )
 
-        # Dedup info
         if duplicates_removed > 0:
             comment_parts.append(
                 f"\n※ 過去に取り上げた{duplicates_removed}件は除外済みです。"
@@ -225,7 +235,6 @@ class NotionClient:
         total_before_dedup: int,
         duplicates_removed: int,
     ) -> str:
-        """Build intro with smart commentary."""
         comment = self._generate_weekly_comment(
             scored_papers, total_before_dedup, duplicates_removed
         )
@@ -242,8 +251,9 @@ class NotionClient:
         lines = []
         for s in scored_papers[:10]:
             topic_str = f"[{s.primary_topic}]" if s.matched_topics else ""
+            lab_str = f"[{s.primary_lab_area}]" if s.primary_lab_area else ""
             lines.append(
-                f"• {topic_str} {s.paper.title[:100]} "
+                f"• {topic_str}{lab_str} {s.paper.title[:100]} "
                 f"({s.paper.first_author} et al., {s.paper.journal})"
             )
         return "\n".join(lines)
@@ -263,6 +273,16 @@ class NotionClient:
             ]
             if p.doi:
                 section.append(f"DOI: {p.doi}")
+
+            # Recommendation reason
+            section.append(f"\n[おすすめ理由]\n{s.recommendation_reason}")
+
+            # Method/concept tags
+            if s.matched_methods:
+                section.append(f"手法: {', '.join(s.matched_methods)}")
+            if s.matched_concepts:
+                section.append(f"コンセプト: {', '.join(s.matched_concepts)}")
+
             if p.abstract:
                 excerpt = p.abstract[:300]
                 if len(p.abstract) > 300:
@@ -305,12 +325,10 @@ class NotionClient:
         total_before_dedup: int = 0,
         duplicates_removed: int = 0,
     ) -> str:
-        """Post a weekly newsletter issue to the Notion database."""
         if not self.database_id:
             raise ValueError("NOTION_DATABASE_ID is required.")
 
         if not scored_papers:
-            # No new papers after dedup
             intro = self._generate_weekly_comment(
                 [], total_before_dedup, duplicates_removed
             )
@@ -393,10 +411,9 @@ class NotionClient:
         scored_papers: list[ScoredArticle],
         intro: str,
     ) -> list[dict]:
-        """Build rich page body blocks."""
         blocks = []
 
-        # Weekly comment callout (the smart intro)
+        # Weekly comment callout
         blocks.append({
             "object": "block",
             "type": "callout",
@@ -408,7 +425,48 @@ class NotionClient:
 
         blocks.append({"object": "block", "type": "divider", "divider": {}})
 
-        # Stats heading
+        # ── Research area summary ──
+        blocks.append({
+            "object": "block",
+            "type": "heading_2",
+            "heading_2": {"rich_text": _rich_text("🔬 研究テーマ別サマリ")},
+        })
+
+        area_papers: dict[str, list[ScoredArticle]] = {}
+        for s in scored_papers:
+            for area in s.lab_relevance:
+                area_papers.setdefault(area, []).append(s)
+
+        if area_papers:
+            for area_name, papers in sorted(
+                area_papers.items(), key=lambda x: len(x[1]), reverse=True
+            ):
+                summary = f"■ {area_name}（{len(papers)}件）"
+                titles = [f"  • {p.paper.title[:80]}" for p in papers[:3]]
+                blocks.append({
+                    "object": "block",
+                    "type": "paragraph",
+                    "paragraph": {
+                        "rich_text": _rich_text(
+                            summary + "\n" + "\n".join(titles)
+                        ),
+                    },
+                })
+        else:
+            blocks.append({
+                "object": "block",
+                "type": "paragraph",
+                "paragraph": {
+                    "rich_text": _rich_text(
+                        "今週は研究テーマに直接関連する論文はありませんでしたが、"
+                        "NKT研究の動向として参考になります。"
+                    ),
+                },
+            })
+
+        blocks.append({"object": "block", "type": "divider", "divider": {}})
+
+        # ── Topic stats ──
         blocks.append({
             "object": "block",
             "type": "heading_2",
@@ -432,32 +490,59 @@ class NotionClient:
 
         blocks.append({"object": "block", "type": "divider", "divider": {}})
 
-        # Each paper
+        # ── Each paper with recommendation ──
         for rank, s in enumerate(scored_papers, 1):
             p = s.paper
+
+            # Title heading
             blocks.append({
                 "object": "block",
                 "type": "heading_3",
                 "heading_3": {"rich_text": _rich_text(f"#{rank} {p.title}")},
             })
 
-            meta = (
-                f"{p.first_author} et al. | {p.journal} | {p.pub_date}\n"
+            # Metadata
+            meta_parts = [
+                f"{p.first_author} et al. | {p.journal} | {p.pub_date}",
                 f"Score: {s.total_score:.2f} | "
-                f"Topics: {', '.join(s.matched_topics) if s.matched_topics else 'General'}"
-            )
+                f"Topics: {', '.join(s.matched_topics) if s.matched_topics else 'General'}",
+            ]
+
+            if s.matched_methods:
+                meta_parts.append(f"手法: {', '.join(s.matched_methods)}")
+            if s.matched_concepts:
+                meta_parts.append(f"コンセプト: {', '.join(s.matched_concepts)}")
+            if s.lab_relevance:
+                areas = sorted(s.lab_relevance.keys())
+                meta_parts.append(f"研究テーマ: {', '.join(areas)}")
+
             blocks.append({
                 "object": "block",
                 "type": "paragraph",
-                "paragraph": {"rich_text": _rich_text(meta)},
+                "paragraph": {"rich_text": _rich_text("\n".join(meta_parts))},
             })
 
+            # Recommendation reason callout
+            if s.recommendation_reason:
+                blocks.append({
+                    "object": "block",
+                    "type": "callout",
+                    "callout": {
+                        "rich_text": _rich_text(
+                            f"おすすめ理由:\n{s.recommendation_reason}"
+                        ),
+                        "icon": {"type": "emoji", "emoji": "⭐"},
+                    },
+                })
+
+            # Bookmark
             blocks.append({
                 "object": "block",
                 "type": "bookmark",
                 "bookmark": {"url": p.url},
             })
 
+            # Abstract toggle
             if p.abstract:
                 blocks.append({
                     "object": "block",
@@ -467,7 +552,9 @@ class NotionClient:
                         "children": [{
                             "object": "block",
                             "type": "paragraph",
-                            "paragraph": {"rich_text": _rich_text(p.abstract[:2000])},
+                            "paragraph": {
+                                "rich_text": _rich_text(p.abstract[:2000]),
+                            },
                         }],
                     },
                 })

@@ -1,11 +1,15 @@
 """Relevance scoring engine for NKT cell papers.
 
-Scores papers against the lab's research interests and classifies them
-according to the Notion database Topics:
-  iNKT development, NKT-B cell, Osteoimmunology, Autoimmunity / SLE,
-  Metabolism, Tumor immunity, Infection, Methods / Omics,
-  Thymus / development, B cell tolerance, Cytokines (IL-4/IFNγ),
-  TCR repertoire, scRNA-seq / spatial
+Scores papers against the lab's research interests across three axes:
+  1. Topic matching (13 categories)
+  2. Method applicability (experimental techniques transferable to our research)
+  3. Concept connections (conceptual frameworks relevant to our themes)
+
+Lab research areas:
+  - NKTの恒常性維持機能 (NKT homeostasis)
+  - NKTワクチン (NKT vaccine / immunotherapy)
+  - 整形外科 (Orthopedics)
+  - 骨代謝研究 (Bone metabolism)
 """
 
 import logging
@@ -17,7 +21,281 @@ from src.pubmed.client import Paper
 logger = logging.getLogger(__name__)
 
 
-# ── Topic scoring profiles ─────────────────────────────────────────────
+# ── Lab research areas ────────────────────────────────────────────────
+
+LAB_RESEARCH_AREAS: dict[str, dict] = {
+    "NKT恒常性維持": {
+        "description_ja": "NKT細胞の恒常性維持機能の解明",
+        "keywords": [
+            "NKT cell homeostasis", "iNKT homeostasis",
+            "NKT cell maintenance", "NKT survival",
+            "NKT cell turnover", "tissue-resident NKT",
+            "NKT cell development", "iNKT development",
+            "NKT cell maturation", "NKT cell selection",
+            "NKT cell emigration", "peripheral NKT",
+            "NKT cell differentiation", "PLZF",
+            "NKT1", "NKT2", "NKT17",
+            "steady state NKT", "IL-7 NKT", "IL-15 NKT",
+            "NKT cell regulation", "NKT tolerance",
+        ],
+    },
+    "NKTワクチン": {
+        "description_ja": "NKTワクチン・NKT細胞を利用した免疫療法の開発",
+        "keywords": [
+            "NKT vaccine", "NKT cell therapy",
+            "NKT immunotherapy", "NKT anti-tumor",
+            "CAR-NKT", "chimeric antigen receptor NKT",
+            "NKT adoptive transfer", "NKT adjuvant",
+            "α-GalCer vaccine", "alpha-GalCer vaccine",
+            "dendritic cell NKT", "NKT cell clinical",
+            "NKT cell trial", "NKT cell expansion",
+            "NKT cancer", "NKT tumor",
+            "NKT immunosurveillance",
+        ],
+    },
+    "整形外科": {
+        "description_ja": "整形外科領域における免疫・骨関連研究",
+        "keywords": [
+            "orthopedic", "orthopaedic",
+            "arthroplasty", "osteoarthritis",
+            "fracture", "fracture healing",
+            "joint replacement", "spinal",
+            "musculoskeletal", "cartilage",
+            "synovial", "joint", "tendon",
+            "implant", "prosthesis",
+            "rheumatoid arthritis",
+            "surgical", "perioperative immune",
+        ],
+    },
+    "骨代謝研究": {
+        "description_ja": "骨代謝・骨免疫学（osteoimmunology）の研究",
+        "keywords": [
+            "bone metabolism", "bone remodeling",
+            "osteoclast", "osteoblast", "osteocyte",
+            "RANKL", "OPG", "osteoprotegerin",
+            "bone resorption", "bone formation",
+            "bone mineral density", "osteoporosis",
+            "osteoimmunology", "bone marrow",
+            "calcium metabolism", "vitamin D bone",
+            "PTH", "parathyroid", "Wnt signaling bone",
+            "BMP", "bone healing",
+        ],
+    },
+}
+
+
+# ── Method profiles ───────────────────────────────────────────────────
+
+METHOD_PROFILES: dict[str, dict] = {
+    "フローサイトメトリー": {
+        "keywords": [
+            "flow cytometry", "FACS", "CyTOF", "mass cytometry",
+            "spectral flow cytometry", "intracellular staining",
+            "cell sorting", "multicolor",
+        ],
+        "applicability": {
+            "NKT恒常性維持": "NKTサブセット（NKT1/2/17）の表面マーカー解析やPLZF発現パターンの解析に応用可能",
+            "NKTワクチン": "ワクチン投与後のNKT活性化・サイトカイン産生プロファイルの評価に利用可能",
+            "骨代謝研究": "骨髄中のNKTや免疫細胞の表現型解析に応用可能",
+        },
+    },
+    "シングルセル解析": {
+        "keywords": [
+            "scRNA-seq", "single-cell RNA", "single cell RNA",
+            "CITE-seq", "ATAC-seq", "multiome",
+            "spatial transcriptomics", "single cell analysis",
+            "10x Genomics", "Smart-seq", "Drop-seq",
+        ],
+        "applicability": {
+            "NKT恒常性維持": "NKTサブセットの転写プロファイルや分化軌跡の解析に有用",
+            "NKTワクチン": "ワクチン応答時のNKTクローン動態や遺伝子発現変動の解析に応用可能",
+            "骨代謝研究": "骨髄微小環境における免疫細胞-骨細胞クロストークの網羅的解析が可能",
+        },
+    },
+    "in vivoモデル": {
+        "keywords": [
+            "knockout mouse", "knockout mice", "KO mouse", "KO mice",
+            "transgenic mouse", "transgenic mice",
+            "conditional knockout", "Cre-lox",
+            "adoptive transfer", "bone marrow transplant",
+            "chimera", "parabiosis",
+            "disease model", "collagen-induced",
+        ],
+        "applicability": {
+            "NKT恒常性維持": "遺伝子改変マウスによるNKT恒常性維持メカニズムの検証に直接応用可能",
+            "NKTワクチン": "腫瘍モデルでのNKTワクチン効果検証に利用可能",
+            "整形外科": "関節炎・骨折モデルでのNKT機能解析に応用可能",
+            "骨代謝研究": "骨粗鬆症・骨折モデルでの免疫-骨相互作用の検証に有用",
+        },
+    },
+    "脂質抗原・α-GalCer": {
+        "keywords": [
+            "α-GalCer", "alpha-GalCer", "αGalCer",
+            "KRN7000", "lipid antigen", "glycolipid antigen",
+            "CD1d loading", "lipid presentation",
+            "lipid-pulsed dendritic cell",
+        ],
+        "applicability": {
+            "NKT恒常性維持": "NKT活性化と恒常性維持バランスの理解に重要",
+            "NKTワクチン": "α-GalCerをアジュバントとしたワクチン設計に直接関連",
+        },
+    },
+    "骨イメージング": {
+        "keywords": [
+            "micro-CT", "microCT", "DEXA", "DXA",
+            "bone histomorphometry", "TRAP staining",
+            "calcein labeling", "alizarin red",
+            "bone imaging", "μCT",
+        ],
+        "applicability": {
+            "整形外科": "骨構造評価・治療効果判定に直接応用可能",
+            "骨代謝研究": "骨量・骨微細構造の定量評価法として有用",
+        },
+    },
+    "共培養・in vitro": {
+        "keywords": [
+            "co-culture", "coculture",
+            "in vitro differentiation", "cell culture",
+            "osteoclast differentiation", "osteoblast differentiation",
+            "T cell activation assay", "cytotoxicity assay",
+            "proliferation assay", "suppression assay",
+        ],
+        "applicability": {
+            "NKT恒常性維持": "NKT細胞の増殖・生存シグナルの機能解析に有用",
+            "NKTワクチン": "NKT-DC相互作用の解析やワクチン効果のin vitro評価に応用可能",
+            "骨代謝研究": "破骨細胞・骨芽細胞分化に対するNKT由来因子の影響評価に有用",
+        },
+    },
+    "臨床研究": {
+        "keywords": [
+            "clinical trial", "phase I", "phase II", "phase III",
+            "patient cohort", "clinical study",
+            "peripheral blood", "PBMC",
+            "healthy donor", "patient sample",
+            "biomarker", "prognosis",
+        ],
+        "applicability": {
+            "NKTワクチン": "NKTワクチンの臨床応用データとして直接参考になる",
+            "整形外科": "患者検体を用いた免疫学的バイオマーカーの研究に応用可能",
+        },
+    },
+    "TCR解析": {
+        "keywords": [
+            "TCR repertoire", "TCR sequencing",
+            "Vβ chain", "Vbeta", "CDR3",
+            "TCR diversity", "clonotype",
+            "TCR signaling",
+        ],
+        "applicability": {
+            "NKT恒常性維持": "NKTのsemi-invariant TCRレパトアの多様性と恒常性維持の関係解明に有用",
+            "NKTワクチン": "ワクチン応答におけるNKTクローン選択の評価に応用可能",
+        },
+    },
+}
+
+
+# ── Concept profiles ──────────────────────────────────────────────────
+
+CONCEPT_PROFILES: dict[str, dict] = {
+    "免疫恒常性": {
+        "keywords": [
+            "immune homeostasis", "homeostatic proliferation",
+            "steady state", "immune regulation",
+            "regulatory function", "immune tolerance",
+            "self-renewal", "cell survival",
+            "apoptosis resistance", "quiescence",
+        ],
+        "relevance": {
+            "NKT恒常性維持": "NKT細胞の恒常性維持機構の理解に直結するコンセプト",
+        },
+    },
+    "免疫-骨クロストーク": {
+        "keywords": [
+            "osteoimmunology", "immune bone",
+            "bone immune", "skeletal immune",
+            "osteoclast immune", "RANKL immune",
+            "inflammatory bone loss", "immune-mediated bone",
+        ],
+        "relevance": {
+            "骨代謝研究": "免疫細胞が骨代謝に与える影響という研究の中核コンセプト",
+            "整形外科": "炎症性骨破壊や整形外科疾患の病態理解に重要",
+        },
+    },
+    "組織常在免疫": {
+        "keywords": [
+            "tissue-resident", "tissue resident",
+            "tissue residency", "tissue homing",
+            "organ-specific", "local immunity",
+            "niche", "microenvironment",
+        ],
+        "relevance": {
+            "NKT恒常性維持": "組織常在NKTの維持メカニズムの理解に重要",
+            "骨代謝研究": "骨髄ニッチにおけるNKTの役割理解に応用可能",
+        },
+    },
+    "自然免疫-獲得免疫ブリッジ": {
+        "keywords": [
+            "innate-adaptive", "bridge", "innate adaptive",
+            "innate-like", "innate like lymphocyte",
+            "unconventional T cell", "bridging immunity",
+        ],
+        "relevance": {
+            "NKT恒常性維持": "NKTのinnate-like T cellとしての特性理解に重要",
+            "NKTワクチン": "NKTをブリッジとしたワクチン戦略の理論的基盤",
+        },
+    },
+    "細胞治療・養子免疫療法": {
+        "keywords": [
+            "adoptive cell therapy", "cell therapy",
+            "CAR-T", "CAR-NKT", "chimeric antigen",
+            "ex vivo expansion", "GMP",
+            "cell manufacturing",
+        ],
+        "relevance": {
+            "NKTワクチン": "NKT細胞を用いた細胞治療の技術的・概念的枠組みとして直接関連",
+        },
+    },
+    "サイトカインネットワーク": {
+        "keywords": [
+            "cytokine network", "cytokine milieu",
+            "IL-4", "IFN-γ", "IFNγ", "IL-12",
+            "IL-17", "IL-21", "cytokine storm",
+            "Th1", "Th2", "cytokine bias",
+        ],
+        "relevance": {
+            "NKT恒常性維持": "NKTのサイトカイン産生パターンと恒常性維持の関係理解に有用",
+            "NKTワクチン": "ワクチン応答の免疫誘導方向（Th1/Th2）の制御に重要",
+            "骨代謝研究": "炎症性サイトカインによる骨吸収制御の理解に応用可能",
+        },
+    },
+    "脂質免疫学": {
+        "keywords": [
+            "lipid immunology", "lipid antigen",
+            "CD1d", "lipid presentation",
+            "glycolipid", "sphingolipid",
+            "lipid raft", "lipid metabolism immune",
+        ],
+        "relevance": {
+            "NKT恒常性維持": "NKTの抗原認識と恒常性維持における脂質環境の理解に重要",
+            "NKTワクチン": "脂質抗原ベースのワクチン設計に直接関連するコンセプト",
+        },
+    },
+    "骨リモデリング": {
+        "keywords": [
+            "bone remodeling", "bone turnover",
+            "coupling", "osteoclast-osteoblast",
+            "bone formation resorption",
+            "remodeling cycle", "bone homeostasis",
+        ],
+        "relevance": {
+            "骨代謝研究": "骨リモデリングのメカニズム理解という研究の基盤コンセプト",
+            "整形外科": "手術後の骨治癒やインプラント周囲骨代謝の理解に重要",
+        },
+    },
+}
+
+
+# ── Topic scoring profiles (13 categories) ───────────────────────────
 
 TOPIC_PROFILES: dict[str, dict] = {
     "iNKT development": {
@@ -252,15 +530,17 @@ TOPIC_PROFILES: dict[str, dict] = {
 }
 
 
-# ── Scored article result ───────────────────────────────────────────────
+# ── Scored article result ─────────────────────────────────────────────
 
 @dataclass
 class ScoredArticle:
-    """Scoring result for a paper."""
     paper: Paper
     total_score: float = 0.0
     topic_scores: dict[str, float] = field(default_factory=dict)
     matched_topics: list[str] = field(default_factory=list)
+    matched_methods: list[str] = field(default_factory=list)
+    matched_concepts: list[str] = field(default_factory=list)
+    lab_relevance: dict[str, float] = field(default_factory=dict)
     recommendation_reason: str = ""
 
     @property
@@ -269,8 +549,14 @@ class ScoredArticle:
             return "iNKT development"
         return max(self.topic_scores, key=self.topic_scores.get)
 
+    @property
+    def primary_lab_area(self) -> str:
+        if not self.lab_relevance:
+            return ""
+        return max(self.lab_relevance, key=self.lab_relevance.get)
 
-# ── Scorer ──────────────────────────────────────────────────────────────
+
+# ── Scorer ────────────────────────────────────────────────────────────
 
 def _text_contains(text: str, keyword: str) -> bool:
     return bool(re.search(re.escape(keyword), text, re.IGNORECASE))
@@ -286,23 +572,78 @@ def _build_searchable_text(paper: Paper) -> str:
 class RelevanceScorer:
 
     TITLE_MULTIPLIER = 2.0
-    SCORE_THRESHOLD = 0.15  # minimum to assign a topic
+    SCORE_THRESHOLD = 0.15
+
+    # Weights for final composite score
+    W_TOPIC = 0.40
+    W_METHOD = 0.25
+    W_CONCEPT = 0.20
+    W_LAB = 0.15
 
     def score_paper(self, paper: Paper) -> ScoredArticle:
         result = ScoredArticle(paper=paper)
         full_text = _build_searchable_text(paper)
 
+        # 1. Topic scoring
         for topic_name, profile in TOPIC_PROFILES.items():
-            score = self._score_topic(paper, full_text, profile)
+            score = self._score_keyword_profile(paper, full_text, profile)
             result.topic_scores[topic_name] = score
             if score >= self.SCORE_THRESHOLD:
                 result.matched_topics.append(topic_name)
 
-        result.total_score = max(result.topic_scores.values()) if result.topic_scores else 0.0
-        result.recommendation_reason = self._generate_reason(result)
+        topic_max = max(result.topic_scores.values()) if result.topic_scores else 0.0
+
+        # 2. Method scoring
+        method_scores: dict[str, float] = {}
+        for method_name, profile in METHOD_PROFILES.items():
+            score = self._score_keywords(full_text, profile["keywords"])
+            if score > 0:
+                method_scores[method_name] = score
+                result.matched_methods.append(method_name)
+
+        method_max = max(method_scores.values()) if method_scores else 0.0
+
+        # 3. Concept scoring
+        concept_scores: dict[str, float] = {}
+        for concept_name, profile in CONCEPT_PROFILES.items():
+            score = self._score_keywords(full_text, profile["keywords"])
+            if score > 0:
+                concept_scores[concept_name] = score
+                result.matched_concepts.append(concept_name)
+
+        concept_max = max(concept_scores.values()) if concept_scores else 0.0
+
+        # 4. Lab research area scoring
+        for area_name, area in LAB_RESEARCH_AREAS.items():
+            score = self._score_keywords(full_text, area["keywords"])
+            if score > 0:
+                result.lab_relevance[area_name] = score
+
+        lab_max = max(result.lab_relevance.values()) if result.lab_relevance else 0.0
+
+        # Composite score
+        result.total_score = min(
+            self.W_TOPIC * topic_max
+            + self.W_METHOD * method_max
+            + self.W_CONCEPT * concept_max
+            + self.W_LAB * lab_max,
+            1.0,
+        )
+
+        # Boost: papers hitting multiple lab areas get a bonus
+        if len(result.lab_relevance) >= 2:
+            result.total_score = min(result.total_score * 1.2, 1.0)
+
+        # Generate recommendation reason
+        result.recommendation_reason = self._generate_reason(
+            result, method_scores, concept_scores,
+        )
+
         return result
 
-    def _score_topic(self, paper: Paper, full_text: str, profile: dict) -> float:
+    def _score_keyword_profile(
+        self, paper: Paper, full_text: str, profile: dict,
+    ) -> float:
         score = 0.0
         for term in profile.get("primary", []):
             if _text_contains(full_text, term):
@@ -317,14 +658,76 @@ class RelevanceScorer:
                 score += 0.05
         return min(score, 1.0)
 
-    def _generate_reason(self, result: ScoredArticle) -> str:
-        if result.matched_topics:
-            return f"Topics: {', '.join(result.matched_topics)}"
-        return "NKT cell related"
+    def _score_keywords(self, text: str, keywords: list[str]) -> float:
+        hits = sum(1 for kw in keywords if _text_contains(text, kw))
+        if hits == 0:
+            return 0.0
+        return min(hits * 0.2, 1.0)
+
+    def _generate_reason(
+        self,
+        result: ScoredArticle,
+        method_scores: dict[str, float],
+        concept_scores: dict[str, float],
+    ) -> str:
+        parts = []
+
+        # Lab area relevance
+        if result.lab_relevance:
+            top_areas = sorted(
+                result.lab_relevance.items(), key=lambda x: x[1], reverse=True,
+            )
+            area_names = [a[0] for a in top_areas[:2]]
+            parts.append(f"研究テーマ関連: {', '.join(area_names)}")
+
+        # Method applicability
+        if result.matched_methods:
+            method_details = []
+            for method_name in result.matched_methods[:2]:
+                profile = METHOD_PROFILES[method_name]
+                for area_name in result.lab_relevance:
+                    if area_name in profile.get("applicability", {}):
+                        method_details.append(
+                            f"{method_name} → {profile['applicability'][area_name]}"
+                        )
+                        break
+                else:
+                    method_details.append(method_name)
+
+            if method_details:
+                parts.append(f"手法: {' / '.join(method_details)}")
+
+        # Concept connections
+        if result.matched_concepts:
+            concept_details = []
+            for concept_name in result.matched_concepts[:2]:
+                profile = CONCEPT_PROFILES[concept_name]
+                for area_name in result.lab_relevance:
+                    if area_name in profile.get("relevance", {}):
+                        concept_details.append(
+                            f"{concept_name} — {profile['relevance'][area_name]}"
+                        )
+                        break
+                else:
+                    concept_details.append(concept_name)
+
+            if concept_details:
+                parts.append(f"コンセプト: {' / '.join(concept_details)}")
+
+        if not parts:
+            if result.matched_topics:
+                parts.append(f"NKT研究トピック: {', '.join(result.matched_topics[:3])}")
+            else:
+                parts.append("NKT細胞関連論文")
+
+        return "\n".join(parts)
 
     def score_and_rank(self, papers: list[Paper]) -> list[ScoredArticle]:
         scored = [self.score_paper(p) for p in papers]
         scored.sort(key=lambda x: x.total_score, reverse=True)
         if scored:
-            logger.info(f"Scored {len(scored)} papers. Top score: {scored[0].total_score:.2f}")
+            logger.info(
+                f"Scored {len(scored)} papers. "
+                f"Top score: {scored[0].total_score:.2f}"
+            )
         return scored
