@@ -21,7 +21,7 @@ from notion_client import Client as NotionSDK
 from notion_client.errors import APIResponseError
 
 from src.config import config
-from src.scorer.relevance import ScoredArticle
+from src.scorer.relevance import ScoredArticle, MethodMatch, ConceptMatch
 
 logger = logging.getLogger(__name__)
 
@@ -242,8 +242,9 @@ class NotionClient:
         lines = []
         for s in scored_papers[:10]:
             topic_str = f"[{s.primary_topic}]" if s.matched_topics else ""
+            theme_str = f"[{s.research_theme}]" if s.research_theme else ""
             lines.append(
-                f"• {topic_str} {s.paper.title[:100]} "
+                f"• {topic_str}{theme_str} {s.paper.title[:100]} "
                 f"({s.paper.first_author} et al., {s.paper.journal})"
             )
         return "\n".join(lines)
@@ -263,11 +264,22 @@ class NotionClient:
             ]
             if p.doi:
                 section.append(f"DOI: {p.doi}")
-            if p.abstract:
-                excerpt = p.abstract[:300]
-                if len(p.abstract) > 300:
-                    excerpt += "..."
-                section.append(f"\n{excerpt}")
+
+            section.append("[おすすめ理由]")
+            if s.research_theme:
+                section.append(f"研究テーマ関連: {s.research_theme}")
+            if s.matched_methods:
+                method_strs = [
+                    f"{m.name} → {m.application}"
+                    for m in s.matched_methods[:3]
+                ]
+                section.append("手法: " + " / ".join(method_strs))
+            if s.matched_concepts:
+                concept_strs = [
+                    f"{c.name} — {c.relevance}"
+                    for c in s.matched_concepts[:3]
+                ]
+                section.append("コンセプト: " + " / ".join(concept_strs))
 
             sections.append("\n".join(section))
 
@@ -408,6 +420,39 @@ class NotionClient:
 
         blocks.append({"object": "block", "type": "divider", "divider": {}})
 
+        # Research theme summary
+        blocks.append({
+            "object": "block",
+            "type": "heading_2",
+            "heading_2": {"rich_text": _rich_text("🔬 研究テーマ別サマリ")},
+        })
+
+        theme_papers: dict[str, list[str]] = {}
+        for s in scored_papers:
+            theme = s.research_theme
+            if theme:
+                theme_papers.setdefault(theme, []).append(s.paper.title[:80])
+
+        if theme_papers:
+            theme_lines = []
+            for theme, titles in theme_papers.items():
+                theme_lines.append(f"■ {theme}（{len(titles)}件）")
+                for t in titles:
+                    theme_lines.append(f"  - {t}")
+            blocks.append({
+                "object": "block",
+                "type": "paragraph",
+                "paragraph": {"rich_text": _rich_text("\n".join(theme_lines))},
+            })
+        else:
+            blocks.append({
+                "object": "block",
+                "type": "paragraph",
+                "paragraph": {"rich_text": _rich_text("今週は直接関連テーマの論文はありませんでした。")},
+            })
+
+        blocks.append({"object": "block", "type": "divider", "divider": {}})
+
         # Stats heading
         blocks.append({
             "object": "block",
@@ -441,16 +486,52 @@ class NotionClient:
                 "heading_3": {"rich_text": _rich_text(f"#{rank} {p.title}")},
             })
 
-            meta = (
-                f"{p.first_author} et al. | {p.journal} | {p.pub_date}\n"
+            meta_parts = [
+                f"{p.first_author} et al. | {p.journal} | {p.pub_date}",
                 f"Score: {s.total_score:.2f} | "
-                f"Topics: {', '.join(s.matched_topics) if s.matched_topics else 'General'}"
-            )
+                f"Topics: {', '.join(s.matched_topics) if s.matched_topics else 'General'}",
+            ]
+            if s.matched_methods:
+                meta_parts.append(
+                    "手法: " + ", ".join(m.name for m in s.matched_methods[:3])
+                )
+            if s.research_theme:
+                meta_parts.append(f"研究テーマ: {s.research_theme}")
+
             blocks.append({
                 "object": "block",
                 "type": "paragraph",
-                "paragraph": {"rich_text": _rich_text(meta)},
+                "paragraph": {"rich_text": _rich_text("\n".join(meta_parts))},
             })
+
+            # Recommendation callout with method/concept details
+            reason_parts = []
+            if s.research_theme:
+                reason_parts.append(f"研究テーマ関連: {s.research_theme}")
+            if s.matched_methods:
+                method_strs = [
+                    f"{m.name} → {m.application}"
+                    for m in s.matched_methods[:3]
+                ]
+                reason_parts.append("手法: " + " / ".join(method_strs))
+            if s.matched_concepts:
+                concept_strs = [
+                    f"{c.name} — {c.relevance}"
+                    for c in s.matched_concepts[:2]
+                ]
+                reason_parts.append("コンセプト: " + " / ".join(concept_strs))
+
+            if reason_parts:
+                blocks.append({
+                    "object": "block",
+                    "type": "callout",
+                    "callout": {
+                        "rich_text": _rich_text(
+                            "おすすめ理由:\n" + "\n".join(reason_parts)
+                        ),
+                        "icon": {"type": "emoji", "emoji": "⭐"},
+                    },
+                })
 
             blocks.append({
                 "object": "block",
