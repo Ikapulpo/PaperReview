@@ -34,6 +34,9 @@ class Paper:
     doi: str = ""
     keywords: list[str] = field(default_factory=list)
     mesh_terms: list[str] = field(default_factory=list)
+    affiliation: str = ""
+    volume: str = ""
+    issue_number: str = ""
 
     @property
     def url(self) -> str:
@@ -72,8 +75,8 @@ class PubMedClient:
                 else:
                     raise
 
-    def search_recent(self, days: int = 7) -> list[str]:
-        """Search PubMed for NKT papers published in the last N days.
+    def search_recent(self, days: int = 7, query: str = "") -> list[str]:
+        """Search PubMed for papers published in the last N days.
 
         Returns list of PMIDs.
         """
@@ -82,7 +85,7 @@ class PubMedClient:
 
         params = self._build_params(
             db="pubmed",
-            term=NKT_SEARCH_QUERY,
+            term=query or NKT_SEARCH_QUERY,
             datetype="pdat",
             mindate=date_from,
             maxdate=date_to,
@@ -188,6 +191,18 @@ class PubMedClient:
         else:
             pub_date = ""
 
+        # Volume & Issue
+        volume = article.findtext(".//Journal/JournalIssue/Volume", "")
+        issue_number = article.findtext(".//Journal/JournalIssue/Issue", "")
+
+        # First author affiliation
+        affiliation = ""
+        first_author_elem = article.find(".//AuthorList/Author")
+        if first_author_elem is not None:
+            aff_elem = first_author_elem.find("AffiliationInfo/Affiliation")
+            if aff_elem is not None and aff_elem.text:
+                affiliation = aff_elem.text
+
         # DOI
         doi = ""
         for id_elem in article.findall(".//ArticleId"):
@@ -218,13 +233,16 @@ class PubMedClient:
             doi=doi,
             keywords=keywords,
             mesh_terms=mesh_terms,
+            affiliation=affiliation,
+            volume=volume,
+            issue_number=issue_number,
         )
 
-    def search_and_fetch(self, days: int = 7) -> list[Paper]:
-        """Search for recent NKT papers and fetch their details."""
-        pmids = self.search_recent(days=days)
+    def search_and_fetch(self, days: int = 7, query: str = "") -> list[Paper]:
+        """Search for recent papers and fetch their details."""
+        pmids = self.search_recent(days=days, query=query)
         if not pmids:
-            logger.info("No new NKT papers found.")
+            logger.info("No new papers found.")
             return []
         papers = self.fetch_details(pmids)
         logger.info(f"Fetched details for {len(papers)} papers")
