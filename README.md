@@ -87,6 +87,37 @@ paper-review verify
 | Body (JP) | 各論文の短いサマリ |
 | Papers (list) | 論文リスト（PMID/DOI/URL） |
 
+## Claude Code 自動実行（推奨）
+
+Claude Code の MCP ツール（PubMed MCP + Notion MCP）を使って、AI駆動の週次レビューを自動実行できます。
+
+### セットアップ
+
+1. Claude Code で本リポジトリを開く
+2. 以下のコマンドで週次タスクが自動設定される:
+
+```
+# Claude Code のセッション内で:
+# CronCreate で毎週月曜 9時に自動実行（durable: trueで永続化）
+```
+
+### 実行内容
+
+1. **PubMed MCP** で過去7日間のNKT論文を検索
+2. **AIスコアリング** — キーワードマッチングではなく、Claude が各論文の手法・コンセプトを読んで研究室テーマとの関連度を判定
+3. **Notion MCP** で「週刊NKT（メルマガ）」データベースに自動投稿
+4. **PushNotification** で結果をメール/モバイルに通知
+
+### スタンドアロン実行との違い
+
+| | Python CLI | Claude Code MCP |
+|---|---|---|
+| PubMed検索 | E-utilities API直接 | PubMed MCPツール |
+| スコアリング | キーワードマッチ（13トピック） | AI判定（手法・コンセプト解析） |
+| Notion投稿 | notion-client SDK | Notion MCPツール |
+| スケジュール | schedule パッケージ | CronCreate（durable） |
+| APIキー | .envで管理 | MCP接続で自動 |
+
 ## プロジェクト構成
 
 ```
@@ -94,7 +125,8 @@ PaperReview/
 ├── src/
 │   ├── cli.py              # CLIインターフェース
 │   ├── config.py            # 設定管理
-│   ├── pipeline.py          # メインパイプライン
+│   ├── pipeline.py          # メインパイプライン（Python版）
+│   ├── mcp_pipeline.py      # MCP版パイプライン定義
 │   ├── pubmed/
 │   │   └── client.py        # PubMed E-utilities クライアント
 │   ├── scorer/
