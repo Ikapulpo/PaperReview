@@ -34,6 +34,7 @@ class Paper:
     doi: str = ""
     keywords: list[str] = field(default_factory=list)
     mesh_terms: list[str] = field(default_factory=list)
+    affiliation: str = ""
 
     @property
     def url(self) -> str:
@@ -72,8 +73,8 @@ class PubMedClient:
                 else:
                     raise
 
-    def search_recent(self, days: int = 7) -> list[str]:
-        """Search PubMed for NKT papers published in the last N days.
+    def search_recent(self, days: int = 7, query: str | None = None) -> list[str]:
+        """Search PubMed for papers published in the last N days.
 
         Returns list of PMIDs.
         """
@@ -82,7 +83,7 @@ class PubMedClient:
 
         params = self._build_params(
             db="pubmed",
-            term=NKT_SEARCH_QUERY,
+            term=query or NKT_SEARCH_QUERY,
             datetype="pdat",
             mindate=date_from,
             maxdate=date_to,
@@ -208,6 +209,12 @@ class PubMedClient:
             if mh.findtext("DescriptorName")
         ]
 
+        # Affiliation (first author's)
+        affiliation = ""
+        first_aff = article.find(".//Author/AffiliationInfo/Affiliation")
+        if first_aff is not None and first_aff.text:
+            affiliation = first_aff.text
+
         return Paper(
             pmid=pmid,
             title=title,
@@ -218,13 +225,14 @@ class PubMedClient:
             doi=doi,
             keywords=keywords,
             mesh_terms=mesh_terms,
+            affiliation=affiliation,
         )
 
-    def search_and_fetch(self, days: int = 7) -> list[Paper]:
-        """Search for recent NKT papers and fetch their details."""
-        pmids = self.search_recent(days=days)
+    def search_and_fetch(self, days: int = 7, query: str | None = None) -> list[Paper]:
+        """Search for recent papers and fetch their details."""
+        pmids = self.search_recent(days=days, query=query)
         if not pmids:
-            logger.info("No new NKT papers found.")
+            logger.info("No new papers found.")
             return []
         papers = self.fetch_details(pmids)
         logger.info(f"Fetched details for {len(papers)} papers")
