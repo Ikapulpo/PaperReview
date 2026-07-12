@@ -6,6 +6,11 @@ according to the Notion database Topics:
   Metabolism, Tumor immunity, Infection, Methods / Omics,
   Thymus / development, B cell tolerance, Cytokines (IL-4/IFNγ),
   TCR repertoire, scRNA-seq / spatial
+
+Core research areas (boosted scoring):
+  1. NKT homeostasis (iNKT development)
+  2. NKT vaccines (Tumor immunity)
+  3. Orthopedics / Bone metabolism (Osteoimmunology)
 """
 
 import logging
@@ -15,6 +20,28 @@ from dataclasses import dataclass, field
 from src.pubmed.client import Paper
 
 logger = logging.getLogger(__name__)
+
+CORE_RESEARCH_TOPICS = {
+    "iNKT development",
+    "Thymus / development",
+    "NKT-B cell",
+    "B cell tolerance",
+    "Tumor immunity",
+    "Osteoimmunology",
+}
+
+CORE_BOOST = 1.3
+
+ENKTL_INDICATORS = [
+    "extranodal natural killer/T-cell lymphoma",
+    "extranodal NK/T-cell lymphoma",
+    "extranodal natural killer T-cell lymphoma",
+    "ENKTL",
+    "nasal-type NK/T",
+    "nasal type NK/T",
+    "NK/T-cell lymphoma",
+    "NK/T cell lymphoma",
+]
 
 
 # ── Topic scoring profiles ─────────────────────────────────────────────
@@ -262,6 +289,8 @@ class ScoredArticle:
     topic_scores: dict[str, float] = field(default_factory=dict)
     matched_topics: list[str] = field(default_factory=list)
     recommendation_reason: str = ""
+    is_enktl: bool = False
+    application_points: list[str] = field(default_factory=list)
 
     @property
     def primary_topic(self) -> str:
@@ -288,18 +317,34 @@ class RelevanceScorer:
     TITLE_MULTIPLIER = 2.0
     SCORE_THRESHOLD = 0.15  # minimum to assign a topic
 
+    def _detect_enktl(self, paper: Paper) -> bool:
+        text = f"{paper.title} {paper.abstract}"
+        for indicator in ENKTL_INDICATORS:
+            if _text_contains(text, indicator):
+                return True
+        return False
+
     def score_paper(self, paper: Paper) -> ScoredArticle:
         result = ScoredArticle(paper=paper)
         full_text = _build_searchable_text(paper)
 
+        result.is_enktl = self._detect_enktl(paper)
+
         for topic_name, profile in TOPIC_PROFILES.items():
             score = self._score_topic(paper, full_text, profile)
+            if topic_name in CORE_RESEARCH_TOPICS:
+                score = min(score * CORE_BOOST, 1.0)
             result.topic_scores[topic_name] = score
             if score >= self.SCORE_THRESHOLD:
                 result.matched_topics.append(topic_name)
 
         result.total_score = max(result.topic_scores.values()) if result.topic_scores else 0.0
+
+        if result.is_enktl:
+            result.total_score *= 0.1
+
         result.recommendation_reason = self._generate_reason(result)
+        result.application_points = self._generate_application_points(result)
         return result
 
     def _score_topic(self, paper: Paper, full_text: str, profile: dict) -> float:
@@ -318,13 +363,78 @@ class RelevanceScorer:
         return min(score, 1.0)
 
     def _generate_reason(self, result: ScoredArticle) -> str:
+        if result.is_enktl:
+            return "ENKTL (節外性NK/Tリンパ腫) — iNKTとは異なる疾患"
         if result.matched_topics:
             return f"Topics: {', '.join(result.matched_topics)}"
         return "NKT cell related"
 
+    def _generate_application_points(self, result: ScoredArticle) -> list[str]:
+        points = []
+        topics = set(result.matched_topics)
+        paper = result.paper
+        full_text = _build_searchable_text(paper)
+
+        if result.is_enktl:
+            points.append("ENKTL論文: iNKT細胞研究とは直接関連しないが、NKT名称を含むため検索にヒット")
+            return points
+
+        if topics & {"iNKT development", "Thymus / development"}:
+            points.append("NKT恒常性: iNKT細胞の発生・分化・恒常性維持機構に関連")
+        if "Tumor immunity" in topics:
+            points.append("NKTワクチン: NKT細胞の抗腫瘍免疫・細胞療法に関連")
+        if "Osteoimmunology" in topics:
+            points.append("骨代謝・整形外科: 骨免疫学の知見、骨代謝との接点")
+        if "NKT-B cell" in topics or "B cell tolerance" in topics:
+            points.append("NKT-B細胞相互作用: B細胞トレランス・抗体応答の制御に関連")
+        if "Metabolism" in topics:
+            points.append("代謝: NKT細胞の代謝制御・脂質代謝との関連")
+        if topics & {"Methods / Omics", "scRNA-seq / spatial"}:
+            points.append("手法: 新規実験手法・オミクス解析技術の参考に")
+        if topics & {"Cytokines (IL-4/IFNγ)", "TCR repertoire"}:
+            points.append("基礎メカニズム: サイトカイン産生やTCRレパトア解析の知見")
+
+        method_keywords = [
+            ("CAR-NKT", "CAR-iNKT細胞作製技術"),
+            ("CAR-iNKT", "CAR-iNKT細胞作製技術"),
+            ("chimeric antigen receptor", "CAR技術"),
+            ("adoptive transfer", "養子移入プロトコル"),
+            ("ex vivo expansion", "ex vivo拡大培養法"),
+            ("α-GalCer", "α-GalCer投与戦略"),
+            ("alpha-GalCer", "α-GalCer投与戦略"),
+            ("scRNA-seq", "シングルセルRNA-seq解析"),
+            ("CITE-seq", "CITE-seq解析"),
+            ("spatial transcriptomics", "空間トランスクリプトミクス"),
+            ("CyTOF", "マスサイトメトリー"),
+            ("CIBERSORT", "免疫浸潤解析(CIBERSORT)"),
+            ("flow cytometry", "フローサイトメトリー"),
+            ("bone marrow", "骨髄解析"),
+            ("osteoclast", "破骨細胞関連手法"),
+            ("osteoblast", "骨芽細胞関連手法"),
+        ]
+
+        matched_methods = []
+        for keyword, description in method_keywords:
+            if _text_contains(full_text, keyword) and description not in matched_methods:
+                matched_methods.append(description)
+
+        if matched_methods:
+            points.append(f"注目手法: {', '.join(matched_methods[:4])}")
+
+        if not points:
+            points.append("NKT細胞研究に関連（一般的な関連性）")
+
+        return points
+
     def score_and_rank(self, papers: list[Paper]) -> list[ScoredArticle]:
         scored = [self.score_paper(p) for p in papers]
-        scored.sort(key=lambda x: x.total_score, reverse=True)
+        scored.sort(key=lambda x: (-int(not x.is_enktl), -x.total_score))
         if scored:
-            logger.info(f"Scored {len(scored)} papers. Top score: {scored[0].total_score:.2f}")
+            inkt_papers = [s for s in scored if not s.is_enktl]
+            enktl_papers = [s for s in scored if s.is_enktl]
+            logger.info(
+                f"Scored {len(scored)} papers: "
+                f"{len(inkt_papers)} iNKT-related, {len(enktl_papers)} ENKTL. "
+                f"Top score: {scored[0].total_score:.2f}"
+            )
         return scored

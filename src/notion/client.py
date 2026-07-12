@@ -253,9 +253,10 @@ class NotionClient:
         for i, s in enumerate(scored_papers, 1):
             p = s.paper
             topic_tags = ", ".join(s.matched_topics) if s.matched_topics else "General"
+            enktl_tag = " [ENKTL]" if s.is_enktl else ""
 
             section = [
-                f"── #{i} ──",
+                f"── #{i}{enktl_tag} ──",
                 f"{p.title}",
                 f"{p.first_author} et al. | {p.journal} | {p.pub_date}",
                 f"Topics: {topic_tags} | Score: {s.total_score:.2f}",
@@ -263,6 +264,12 @@ class NotionClient:
             ]
             if p.doi:
                 section.append(f"DOI: {p.doi}")
+
+            if s.application_points:
+                section.append("\n【研究への活用ポイント】")
+                for point in s.application_points:
+                    section.append(f"・{point}")
+
             if p.abstract:
                 excerpt = p.abstract[:300]
                 if len(p.abstract) > 300:
@@ -432,8 +439,11 @@ class NotionClient:
 
         blocks.append({"object": "block", "type": "divider", "divider": {}})
 
-        # Each paper
-        for rank, s in enumerate(scored_papers, 1):
+        # Separate iNKT and ENKTL papers
+        inkt_papers = [(i, s) for i, s in enumerate(scored_papers, 1) if not s.is_enktl]
+        enktl_papers = [(i, s) for i, s in enumerate(scored_papers, 1) if s.is_enktl]
+
+        for rank, s in inkt_papers:
             p = s.paper
             blocks.append({
                 "object": "block",
@@ -458,6 +468,19 @@ class NotionClient:
                 "bookmark": {"url": p.url},
             })
 
+            if s.application_points:
+                app_text = "【研究への活用ポイント】\n" + "\n".join(
+                    f"・{pt}" for pt in s.application_points
+                )
+                blocks.append({
+                    "object": "block",
+                    "type": "callout",
+                    "callout": {
+                        "rich_text": _rich_text(app_text),
+                        "icon": {"type": "emoji", "emoji": "🎯"},
+                    },
+                })
+
             if p.abstract:
                 blocks.append({
                     "object": "block",
@@ -473,6 +496,33 @@ class NotionClient:
                 })
 
             blocks.append({"object": "block", "type": "divider", "divider": {}})
+
+        if enktl_papers:
+            blocks.append({
+                "object": "block",
+                "type": "heading_2",
+                "heading_2": {"rich_text": _rich_text(
+                    f"📋 参考: ENKTL関連論文 — {len(enktl_papers)}件"
+                )},
+            })
+            blocks.append({
+                "object": "block",
+                "type": "paragraph",
+                "paragraph": {"rich_text": _rich_text(
+                    "iNKT細胞とは異なる疾患カテゴリ（節外性NK/Tリンパ腫）です。"
+                    "NKT/NKの名称を含むため検索にヒットしたものです。"
+                )},
+            })
+            for rank, s in enktl_papers:
+                p = s.paper
+                blocks.append({
+                    "object": "block",
+                    "type": "bulleted_list_item",
+                    "bulleted_list_item": {"rich_text": _rich_text(
+                        f"{p.title} — {p.first_author} et al., "
+                        f"{p.journal} (PMID: {p.pmid})"
+                    )},
+                })
 
         return blocks
 

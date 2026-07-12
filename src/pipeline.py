@@ -89,8 +89,11 @@ def execute_pipeline(days: int = 7, max_papers: int = 20, post_to_notion: bool =
     scored = scorer.score_and_rank(papers)
     top = scored[:max_papers]
 
+    inkt_papers = [s for s in top if not s.is_enktl]
+    enktl_papers = [s for s in top if s.is_enktl]
+
     # Display results
-    top_score = top[0].total_score if top else 0
+    top_score = inkt_papers[0].total_score if inkt_papers else 0
 
     # Smart opening comment
     print(f"\n{'='*60}")
@@ -100,24 +103,36 @@ def execute_pipeline(days: int = 7, max_papers: int = 20, post_to_notion: bool =
         print("  ⭐ 今週は注目論文あり — チェック推奨")
     elif top_score >= 0.2:
         print("  📝 今週はそこそこ関連論文あり")
-    elif len(top) <= 2:
+    elif len(inkt_papers) <= 2:
         print("  📭 今週は少なめ — 次週に期待")
     else:
         print("  📋 今週のNKT論文をお届けします")
-    print(f"  検索期間: 過去{days}日間 | 新規: {len(scored)}件", end="")
+    print(f"  検索期間: 過去{days}日間 | iNKT関連: {len(inkt_papers)}件", end="")
+    if enktl_papers:
+        print(f" | ENKTL: {len(enktl_papers)}件", end="")
     if duplicates_removed > 0:
         print(f"（既出{duplicates_removed}件除外）")
     else:
         print()
     print(f"{'='*60}\n")
 
-    for rank, s in enumerate(top, 1):
+    for rank, s in enumerate(inkt_papers, 1):
         p = s.paper
         topics = ", ".join(s.matched_topics) if s.matched_topics else "General"
         print(f"  #{rank} [スコア: {s.total_score:.2f}] [{topics}]")
         print(f"     {p.title}")
         print(f"     {p.first_author} et al. | {p.journal} | {p.pub_date}")
         print(f"     {p.url}")
+        if s.application_points:
+            for pt in s.application_points:
+                print(f"     → {pt}")
+        print()
+
+    if enktl_papers:
+        print(f"  --- ENKTL関連（参考）: {len(enktl_papers)}件 ---")
+        for s in enktl_papers:
+            print(f"     {s.paper.title[:80]}")
+            print(f"     {s.paper.first_author} et al. | {s.paper.journal}")
         print()
 
     # Step 4: Post to Notion
