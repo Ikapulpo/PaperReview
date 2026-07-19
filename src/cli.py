@@ -26,6 +26,18 @@ def cmd_run(args):
         print("\n論文が見つかりませんでした。検索期間を広げてみてください (--days)")
 
 
+def cmd_spine_run(args):
+    """Run the spine paper review pipeline once."""
+    from src.spine.pipeline import execute_spine_pipeline
+    result = execute_spine_pipeline(
+        days=args.days,
+        max_papers=args.max_papers,
+        post_to_notion=not args.no_notion,
+    )
+    if result["papers_found"] == 0:
+        print("\n論文が見つかりませんでした。検索期間を広げてみてください (--days)")
+
+
 def cmd_search(args):
     """Search PubMed only (no Notion posting)."""
     from src.pipeline import execute_pipeline
@@ -70,6 +82,8 @@ def main():
   paper-review run --days 14        過去14日間の論文を検索
   paper-review run --no-notion      Notion投稿なしで検索のみ
   paper-review search               PubMed検索のみ (Notion投稿なし)
+  paper-review spine                週刊スパイン実行 (脊椎論文レビュー)
+  paper-review spine --days 14      過去14日間の脊椎論文を検索
   paper-review schedule             毎週自動実行スケジューラを起動
   paper-review verify               Notion接続テスト
 """,
@@ -94,6 +108,13 @@ def main():
     # schedule
     p_schedule = subparsers.add_parser("schedule", help="スケジューラ起動")
     p_schedule.set_defaults(func=cmd_schedule)
+
+    # spine run
+    p_spine = subparsers.add_parser("spine", help="週刊スパイン論文レビューを実行")
+    p_spine.add_argument("--days", type=int, default=7, help="検索日数 (デフォルト: 7)")
+    p_spine.add_argument("--max-papers", type=int, default=50, help="最大表示論文数 (デフォルト: 50)")
+    p_spine.add_argument("--no-notion", action="store_true", help="Notion投稿をスキップ")
+    p_spine.set_defaults(func=cmd_spine_run)
 
     # verify
     p_verify = subparsers.add_parser("verify", help="Notion接続テスト")

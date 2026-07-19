@@ -220,6 +220,30 @@ class PubMedClient:
             mesh_terms=mesh_terms,
         )
 
+    def search_recent_custom(self, query: str, days: int = 7) -> list[str]:
+        """Search PubMed with a custom query for papers in the last N days."""
+        date_from = (datetime.now() - timedelta(days=days)).strftime("%Y/%m/%d")
+        date_to = datetime.now().strftime("%Y/%m/%d")
+
+        params = self._build_params(
+            db="pubmed",
+            term=query,
+            datetype="pdat",
+            mindate=date_from,
+            maxdate=date_to,
+            retmax=config.pubmed_search_batch,
+            retmode="json",
+            sort="relevance",
+        )
+
+        resp = self._request_with_retry(f"{self.base_url}/esearch.fcgi", params)
+        data = resp.json()
+
+        id_list = data.get("esearchresult", {}).get("idlist", [])
+        total = data.get("esearchresult", {}).get("count", "0")
+        logger.info(f"PubMed custom search: found {total} papers, retrieved {len(id_list)} PMIDs")
+        return id_list
+
     def search_and_fetch(self, days: int = 7) -> list[Paper]:
         """Search for recent NKT papers and fetch their details."""
         pmids = self.search_recent(days=days)
